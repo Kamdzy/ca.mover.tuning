@@ -433,11 +433,18 @@ moverStatusWrite() {
     echo "RemainFilesToSecondary=${REMAININGPRIMARYFILES}" >>$MOVER_STATUS
     echo "TotalFilesFromSecondary=${TOTALSECONDARYFILES}" >>$MOVER_STATUS
     echo "RemainFilesFromSecondary=${REMAININGSECONDARYFILES}" >>$MOVER_STATUS
+    echo "TotalUnattendedFiles=${TOTALUNATTENDEDFILES}" >>$MOVER_STATUS
+    echo "RemainUnattendedFiles=${REMAININGUNATTENDEDFILES}" >>$MOVER_STATUS
+    echo "TotalUnattendedSize=${TOTALUNATTENDEDSIZE}" >>$MOVER_STATUS
+    echo "RemainUnattendedSize=${REMAININGUNATTENDEDSIZE}" >>$MOVER_STATUS
     echo "File=${GUI_CURRENT_FILE}" >>$MOVER_STATUS
     echo "Action=${GUI_ACTION}" >>$MOVER_STATUS
 }
 
 createFilteredFilelist() {
+    # We want to log when we are in 'Calculating' mode
+    moverStatusWrite
+
     mvlogger "$(titleLine 'FILTERING FILES' '*')"
 
     # create a file containing the list off all shareUseCache yes or prefer whith this format:
