@@ -4,7 +4,7 @@ tmpdir=/tmp/tmp.$(( $RANDOM * 19318203981230 + 40 ))
 plugin=$(basename ${DIR})
 archive="$(dirname $(dirname ${DIR}))/archive"
 version=$(date +"%Y.%m.%d.%H%M")$1
-config_file=/mnt/user/appdata/AutoSlackPack/in/ca.mover.tuning//plugins/ca.mover.tuning.plg
+config_file=/mnt/user/scripts/repos/ca.mover.tuning/plugins/ca.mover.tuning.plg
 
 mkdir -p $tmpdir
 

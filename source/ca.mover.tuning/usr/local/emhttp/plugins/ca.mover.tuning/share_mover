@@ -80,6 +80,10 @@ if [ -f $UNRAIDCFGFILE ] ; then
                 LOGLEVEL=1
                 mvlogger "Log Level: $LOGLEVEL"
         fi
+        
+else
+    echo "mover: \"/boot/config/share.cfg\" does not exist, check this."
+    exit 2
 fi
 
 mvlogger "$(titleLine "Mover Tuning Plugin version $(grep "version=" "$MOVERTUNINGCFGFILE" | cut -d '"' -f 2)" '*')"

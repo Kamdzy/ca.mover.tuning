@@ -267,6 +267,36 @@ getMoverSettings() {
         fi
     fi
 
+    # Check if SKIPFILESLIST variable is unset or empty
+    if [ -z "$SKIPFILESLIST" ]; then
+        # If empty, set SKIPFOLDERSLIST to an empty value
+        SKIPFOLDERSLIST=""
+    else
+        # Otherwise, use SKIPFILESLIST to populate SKIPFOLDERSLIST
+        SKIPFILESPATH=$SKIPFILESLIST
+        # Remove trailing whitespace from SKIPFILESPATH
+        SKIPFILESPATH=$(echo $SKIPFILESPATH | sed 's/ *$//g')
+        # Update SKIPFILESLIST with trimmed path
+        SKIPFILESLIST=$SKIPFILESPATH
+        # Initialize SKIPFOLDERSLIST as blank
+        SKIPFOLDERSLIST=""
+        # Read each line from the file in SKIPFILESPATH
+        while IFS= read -r path; do
+            # Remove a trailing slash if present
+            path=${path%/}
+            # If the path belongs to a directory, append the wildcard pattern to SKIPFOLDERSLIST
+            if [ -d "$path" ]; then
+                SKIPFOLDERSLIST+="$path/*"$'\n'
+            fi
+        # Subshell: read from SKIPFILESPATH and echo an extra newline
+        done < <(cat "$SKIPFILESPATH"; echo)
+        # Remove the final newline from SKIPFOLDERSLIST
+        SKIPFOLDERSLIST="${SKIPFOLDERSLIST%$'\n'}"
+        # Log the final skip file and folder paths
+        mvlogger "SKIP FILES PATH: $SKIPFILESLIST"
+        mvlogger "SKIP FOLDERS: $SKIPFOLDERSLIST"
+    fi
+
     if [ -z $(cfg filetypesf) ]; then
         if [[ ! "$config_file" =~ shareOverrideConfig ]]; then
             mvlogger "No Skip File Types argument provided, defaulting to no"
@@ -277,7 +307,7 @@ getMoverSettings() {
         if [ $(cfg filetypesf) = "yes" ]; then
             ###echo "Skipfiletypes supplied"
             SKIPFILETYPES=$(cfg filetypesv)
-            SKIPFILETYPES=$(echo "$SKIPFILETYPES" | awk -F, '{for(i=1;i<=NF;i++) {gsub(/\.| /, "", $i); printf "%s%s", $i, (i<NF?" ":"")}}')
+            SKIPFILETYPES=$(echo "$SKIPFILETYPES" | awk -F, '{for(i=1;i<=NF;i++) {gsub(/\.| /, "", $i); printf "%s%s", $i, (i<NF?" ":"")}}' | sed 's/X/!/') # Remove spaces and dots and replace X with !
             mvlogger "Skip filetypes: $SKIPFILETYPES"
         else
             [[ ! "$config_file" =~ shareOverrideConfig ]] && SKIPFILETYPES=""
@@ -636,6 +666,17 @@ createFilteredFilelist() {
             echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_PATH_RESERVED_SPACE|0|0|0|/mnt/$PRIMARYSTORAGENAME/$SHARENAME hidden files" >>$FILTERED_FILELIST
             mvlogger "    Hidden files are using $(bytes_to_human $SKIPPED_PATH_RESERVED_SPACE)"
         fi
+
+        #Add Skip Folders to find string
+        if [ -n "$SKIPFOLDERSLIST" ]; then
+            mvlogger "Adding Skip Folder List"
+            mvlogger "Skip Folder List Path: ${SKIPFILESPATH}"
+
+            while IFS= read -r folder; do
+                FINDSTR+=" -not -path \"$folder\""
+            done <<<"$SKIPFOLDERSLIST"
+        fi
+
         #Add skipped files and folders
         FINDSTR+=" -not -name \".placeholder\"" #do not move placeholders
         # Add files from ignore list
@@ -664,7 +705,7 @@ createFilteredFilelist() {
                 else
                     mvlogger "Error calculating size for $skipped_path"
                 fi
-            done <<<$(grep "/mnt/$PRIMARYSTORAGENAME/$SHARENAME" "$SKIPFILESLIST")
+            done <<< $(grep "/mnt/$PRIMARYSTORAGENAME/$SHARENAME" | grep -vFx -f <(sed 's/\/*$//' "$SKIPFILESLIST")) # With grep -vFx -f <(sed 's/\/*$//' "$SKIPFILESLIST" -> remove trailing slash
             mvlogger "    Ignored files are using $(bytes_to_human $TOTAL_SKIPPED_PATH_RESERVED_SPACE)"
         fi
 
@@ -673,7 +714,9 @@ createFilteredFilelist() {
         if ([ -z "$OMOVERTHRESH" ] || [ $POOLPCTUSED -le $OMOVERTHRESH ]) && ([ "$SHAREUSECACHE" = "prefer" ] || [ "$SHAREUSECACHE" = "yes" ]) && ([ ! -z "$SKIPFILETYPES" ] || [ ! -z "$globalSkipFileTypes" ]); then
             mvlogger "Skipping Filetypes from List. File sizes are taken into account for the calculation of the threshold"
             for ext in $([ $overrideFlag = 1 ] && echo -n "$SKIPFILETYPES") $(echo -n "$globalSkipFileTypes"); do
-                FINDSTR+=" -not -name \*.$ext"
+                # Escape '!' character in the extension
+                escaped_ext=$(echo "$ext" | sed 's/!/\\!/g')
+                FINDSTR+=" -not -name \*.$escaped_ext"
                 SKIPPED_FILETYPES_RESERVED_SPACE=$(find /mnt/$PRIMARYSTORAGENAME/$SHARENAME -type f -name \*.$ext -print0 | xargs -0 du -sh | awk '{print $1}' | human_to_bytes | awk '{ sum += $1 } END { print sum }')
                 if [ $? -eq 0 ]; then
                     echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_FILETYPES_RESERVED_SPACE|0|0|0|$SHAREPATH/**/*.$ext" >>$FILTERED_FILELIST
@@ -725,8 +768,18 @@ createFilteredFilelist() {
         #        fi
         FINDSTR+="printf \"%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, \$2, \$3, \$4, \$5, \$6}'"
 
+        # Exclude Downloads/incomplete folder
+        FINDSTR+=" | grep -iv 'Downloads/incomplete'"
+
+        # Exclude Downloads/wanted folder
+        FINDSTR+=" | grep -iv 'Downloads/wanted'"
+
+        # Exclude tdarr-cache folder
+        FINDSTR+=" | grep -iv 'tdarr-cache'"
+
         if [ -d "$SHAREPATH" ] || [ "$SHAREUSECACHE" = "prefer" ] || [ $REBALANCESHARES = "yes" ]; then
             [ $CTIME == "yes" ] && mvlogger "Filtering $SHARENAME files... (can take a moment)"
+            mvlogger "FINDSTR is: $FINDSTR"
             eval "$FINDSTR>>$FILTERED_FILELIST"
             mvlogger "Updated Filtered filelist: $FILTERED_FILELIST for $SHARENAME"
         fi
