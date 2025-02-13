@@ -1,12 +1,12 @@
 <?xml version='1.0' standalone='yes'?>
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
-<!ENTITY author    "masterwishx">
+<!ENTITY author    "kamdzy">
 <!ENTITY version   "2025.02.13.1250">
 <!ENTITY md5       "bff26e4dc40bee232dae2e8856376dc2">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
-<!ENTITY github    "masterwishx/ca.mover.tuning">
+<!ENTITY github    "kamdzy/ca.mover.tuning">
 <!ENTITY branch    "master">
 <!ENTITY upgrade   "minor">
 <!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/master/plugins/&name;.plg">
