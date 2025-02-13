@@ -51,6 +51,12 @@ REMAININGUNATTENDEDFILES=0
 REMAININGUNATTENDEDSIZE=0
 overrideFlag=0
 
+#Initialise stats:
+REMAINING_ARRAY_SIZE=0
+REMAINING_ARRAY_FILES=0
+REMAINING_CACHE_SIZE=0
+REMAINING_CACHE_FILES=0
+
 NOW=$(date +"%FT%H%M%S")
 FILTERED_FILELIST="/tmp/ca.mover.tuning/Filtered_files_$NOW.list"
 MOVER_ACTIONLIST="/tmp/ca.mover.tuning/Mover_action_$NOW.list"
@@ -437,6 +443,10 @@ moverStatusWrite() {
     echo "RemainUnattendedFiles=${REMAININGUNATTENDEDFILES}" >>$MOVER_STATUS
     echo "TotalUnattendedSize=${TOTALUNATTENDEDSIZE}" >>$MOVER_STATUS
     echo "RemainUnattendedSize=${REMAININGUNATTENDEDSIZE}" >>$MOVER_STATUS
+    echo "RemainingArraySize=${REMAINING_ARRAY_SIZE}" >>$MOVER_STATUS
+    echo "RemainingArrayFiles=${REMAINING_ARRAY_FILES}" >>$MOVER_STATUS
+    echo "RemainingCacheSize=${REMAINING_CACHE_SIZE}" >>$MOVER_STATUS
+    echo "RemainingCacheFiles=${REMAINING_CACHE_FILES}" >>$MOVER_STATUS
     echo "File=${GUI_CURRENT_FILE}" >>$MOVER_STATUS
     echo "Action=${GUI_ACTION}" >>$MOVER_STATUS
 }
