@@ -30,6 +30,12 @@ If an error occurs in copying a file, the partial file, if present, is deleted a
 
 ## Changelog
 
+- 2025.02.18.1752
+  - [Check parent empty ZFS dataset for children empty datasets before destroy it.](https://github.com/masterwishx/ca.mover.tuning/pull/1) ([masterwishx](https://github.com/masterwishx))
+  - Shell Check Fixes + speedup `if` checks.
+  - Better help text cosmetic with Bold and italic + added note for Test Mode and some changes in config page.
+  - Skip cache pool size calculation when only one share found in cache pool.
+  - Changed minimum threshold of used Primary (cache) space from 5% to 0%.
 - 2025.02.13
 
   - Force ignore folders matching 'tdarr-cache'
