@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2025.02.24">
-<!ENTITY md5       "2604157d9ce26fbfb01b8ea06b3e5abe">
+<!ENTITY version   "2025.02.25.0859">
+<!ENTITY md5       "b5350fbffd12b71e4cc8d4d95167dcd2">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/ca.mover.tuning">
