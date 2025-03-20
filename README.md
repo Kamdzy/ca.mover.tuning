@@ -29,8 +29,26 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.03.20a
+    - fix: Exclude primary storage from find in Move now button in cache:prefer share page , when moving all data from array to cache pool by unraid mover. **_(masterwishx)_**
+
+- 2025.03.20
+    - fix: Added zfs cache:only share calculation when share is folder instead of dataset. Thanks to Sak from forums for the bug report. **_(masterwishx)_**
+    - fix: Added remove potential trailing ( \/, \*, \/\* ) characters from the skipped folder path in ignore file list path.
+    - fix: Fixed issue when thresholds for cache:prefer was applyed to cache:yes shares. Tnanks to Ichthus and other users from forum for the bug report.
+    - new: Added fillup (%) global setting threshold option and override for cache:prefer shares.
+    - new: Move now button in cache:prefer share page , moving all data from array to cache pool by unraid mover.
+
+- 2025.03.11
+    - Fixed zfs cache pool percent calculation. Thanks to Renegade605 from forums for the bug report. **_(masterwishx)_**
+    - Array -> Cache (cache:prefer) now moves data to the cache pool from the array only until reaching a fillup limit of 95%.
+        - Thanks to alturismo and Renegade605 from forums, who helped clarify how this feature should work.
+        - Disabled override setting for mover tuning if shareUseCache="prefer" (Array->Cache) is set.
+    - Format global and share settings help text descriptions add more clear description for mover thresholds.
+    - Fixed ignore file list path setting when folder in list file contains ([). Thanks to JamieBriers from forums for the PR and fix.
+
 - 2025.03.04
-    - Added option for users can enable/disable Validation (Sanitize) check for input filenames to prevent attacks future added befor.
+    - Added option for users can enable/disable Validation (Sanitize) check for input filenames to prevent attacks future added befor. **_(masterwishx)_**
     - Fixed Debug = yes/no instead of 0/1 in mover logs.
     - Fixed primary cache prefer not to move data. Set fixed moving threshold to 99% freeing threshold to 0% for skip moving.
       when chache is full set freeing to 98% to move some data. Maybe better fix will be later.
