@@ -29,6 +29,19 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.04.05
+    - fix: Fix for Logs parent folder can be empty instead of /tmp when no value is provided. Thanks to niwmik2 from forums for reported this issue.
+    - fix: Fixed an issue where (cache:prefer) was generating unnecessary lists for files that should remain on the primary pool.
+    - fix: Only generate updated filtered filelist for (cache:prefer) if we have files on secondary storage.
+    - new: Added Help block to the plugin page, including useful links and a donation link for support.
+
+- 2025.03.30
+    - new: Added new settings: Logs parent folder, age for mover Log,txt and List files. Thanks to Renegade605 and jimlei from forums for the idea. **_(masterwishx)_**
+    - fix: Log Mover Tuning plugin actions setting when set to No, will not post to syslog and Mover_tuning_xxx.log file.
+    - fix: Added a counter when deleting folders and datasets to speed up the counting of files after moving a large number of files. Thanks to Dor from the forums for the idea.
+    - fix: Ensure Folders are always deleted when setting "yes" to clean folders after moving.
+    - new: Added debug when deleting folders and datasets in order to get more information about the process.
+
 - 2025.03.20a
     - fix: Exclude primary storage from find in Move now button in cache:prefer share page , when moving all data from array to cache pool by unraid mover. **_(masterwishx)_**
 
@@ -236,5 +249,10 @@ See the [Mover Tuning\_ thread on the Unraid support forum](https://forums.unrai
 
 ## Thanks
 
-This was originally created by [Squid](https://github.com/Squidly271) and updated by [hugenbd](https://github.com/hugenbd/ca.mover.tuning), with contributions by [Castcore](https://github.com/Castcore), [Swarles](https://github.com/hugenbd/ca.mover.tuning/commit/64e06e91bd83431d768346e4d8158f7be039564e), [Dphelan](https://github.com/dphelan) and [Davendsai](https://github.com/davendesai).
-@2025 Updated by [masterwishx](https://github.com/masterwishx/ca.mover.tuning).
+This was originally created by [Squid](https://github.com/Squidly271).<br>
+
+@2023 - Updated by [hugenbd](https://github.com/hugenbd/ca.mover.tuning), with contributions by [Castcore](https://github.com/Castcore), [Swarles](https://github.com/hugenbd/ca.mover.tuning/commit/64e06e91bd83431d768346e4d8158f7be039564e), [Dphelan](https://github.com/dphelan) and [Davendsai](https://github.com/davendesai).
+
+@2024 - Updated by [R3yn4ld](https://github.com/R3yn4ld/ca.mover.tuning).
+
+@2025 - Updated by [masterwishx](https://github.com/masterwishx/ca.mover.tuning).
