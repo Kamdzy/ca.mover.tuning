@@ -10,9 +10,9 @@ This is a simple [Unraid](https://unraid.net/) plugin that will let you fine-tun
 - Optional ability to completely disable the scheduled runs of mover
 - Manually executed runs of mover ("Move Now" button) can either follow the rules for schedules, or always move all files
 
-This new fork merge all [pull requests](https://github.com/hugenbd/ca.mover.tuning/pulls) after review from [Hugenbd's repo](https://github.com/hugenbd/ca.mover.tuning) (cosmetics, merge skipfiletypes from shares, 4 changes from Swarles below) and add several feature, as for example automatic age threshold and compatibility with Unraid 7.x, and other stuff coming.
+This new fork merge all [pull requests](https://github.com/R3yn4ld/ca.mover.tuning/pulls) after review from [R3yn4ld](https://github.com/R3yn4ld/ca.mover.tuning). (cosmetics, merge skipfiletypes from shares and add several feature, as for example automatic age threshold, sanitize input filenames to prevent attacks and compatibility with Unraid 7.x, and other stuff coming.
 
-## How it works:
+## How it works
 
 First it checks if it's valid for this script run: there must be a cache disk present and an instance of the script must not already be running.
 
@@ -29,11 +29,30 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.05.04
+    - fix: Fix for initialized PREFER_MOVINGPCTTHRESHOLD to 0. Thanks to AdamLeyshon for reported this issue. **_(masterwishx)_**
+    - new: A warning will be added when in test mode and thresholds are either identical or have a small gap between them.
+    - new: Debug download added that collect all data from plugin and save them to a file for debugging purposes. Thanks to Rysz from forums for the code example.
+    - fix: Fix issue where "shareOverrideConfig" with spaces was not working with "grep".
+    - fix: Fix for enabling/disabling Mover running on a schedule.
+
+- 2025.04.24a
+    - fix: version number in default.cfg file. **_(masterwishx)_**
+
+- 2025.04.24
+    - fix: Fix cli arguments when running "mover command" in cli mode for pass them to age_mover script or original mover. **_(masterwishx)_**
+    - new: Add "mover start -e diskX" option for age_mover from original mover for empty an array disk.
+    - new: Added "mover reset" command to reset all settings in the plugin. This will delete also override existing settings.
+    - new: Added a "Defaults" button in the GUI that resets all settings to their default values. This action triggers "age_mover reset" via "reset.php".
+    - fix: Updated plugin version handling to ensure it is stored in the config with quotes and displayed correctly in both the console and logs.
+    - fix: Schedule option to force move all files by unraid mover now logs output via syslog instead of being unlogged. Thanks to williechan91 for reported this issue.
+    - fix: Fix the calculation of PRIMARYSIZETHRESH in cache prefer cases where the threshold can become negative due to freeing thresholds without moving any files. Thanks to AdamLeyshon for reported this issue.
+
 - 2025.04.05
-    - fix: Fix for Logs parent folder can be empty instead of /tmp when no value is provided. Thanks to niwmik2 from forums for reported this issue.
+    - fix: Fix for Logs parent folder can be empty instead of /tmp when no value is provided. Thanks to niwmik2 from forums for reported this issue. **_(masterwishx)_**
     - fix: Fixed an issue where (cache:prefer) was generating unnecessary lists for files that should remain on the primary pool.
     - fix: Only generate updated filtered filelist for (cache:prefer) if we have files on secondary storage.
-    - new: Added Help block to the plugin page, including useful links and a donation link for support.
+    - new: Added Help block to the plugin page, including useful links and a donation link for support. Thanks to KluthR from forums for the code example.
 
 - 2025.03.30
     - new: Added new settings: Logs parent folder, age for mover Log,txt and List files. Thanks to Renegade605 and jimlei from forums for the idea. **_(masterwishx)_**
