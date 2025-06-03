@@ -8,6 +8,7 @@ This is a simple [Unraid](https://unraid.net/) plugin that will let you fine-tun
     - Only actually move file(s) if the cache drive is getting full (selectable thresholds) or/and based on files age,size,etc.
     - Optionally don't move if a parity check / rebuild is already in-progress.
     - Optionally validate input filenames to prevent attacks on the filename.
+    - Optionally select the file-moving tool between Rsync and Unraid's built-in move utility.
 - Optional ability to completely disable the scheduled runs of mover.
 - Manually executed runs of mover ("Move Now" button) or via command line ("mover start") can follow schedule rules or/and always move all files.
 - Expanded functionality with numerous additional options and settings.
@@ -31,6 +32,12 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.06.01
+    - new: Added an option "Move files tool" to select the file-moving tool between Rsync and the Unraid move utility, default file-moving tool set to Rsync. **_(masterwishx)_**
+    - new: Introduced a new debug command "mover debug" to generate a diagnostics package for troubleshooting.
+    - fix: Enhanced logging and debug information for file move operations.
+    - fix: Updated debug package creation to copy the diagnostics ZIP to the system boot logs directory.
+
 - 2025.05.23
     - fix: Fixed "mover start" issue that was scheduled without the "start" parameter by unRaid 6.x. **_(masterwishx)_**
     - new: Added "Top Folder" option for the Clean empty folders feature to remove top-level empty folders on shares.
