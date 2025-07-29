@@ -26,6 +26,7 @@ $cfg = parse_share_cfg($plugin, $shareName);
 $overrideEnabled = ($cfg['moverOverride'] != "yes") ? "no" : "yes";
 $ageDisabled = ($cfg['age'] != "yes") ? "disabled" : "";
 $sizefDisabled = ($cfg['sizef'] != "yes") ? "disabled" : "";
+$sizefSyncDisabled = ($cfg['sizefSync'] != "yes") ? "disabled" : "";
 $sparsenessfDisabled = ($cfg['sparsenessf'] != "yes") ? "disabled" : "";
 $filetypesfDisabled = ($cfg['filetypesf'] != "yes") ? "disabled" : "";
 $filelistfDisabled = ($cfg['filelistf'] != "yes") ? "disabled" : "";
@@ -339,6 +340,35 @@ _(Only move files larger than this (in MB))_:
 <!--:mover_tuning_min_size_help:-->
 > Select the minimum size a file has to be to get moved (in **Megabytes**).
 
+Sync files based on maximum size?
+: <select name="sizefSync" size='1' class='narrow' onchange='$(".mysizefSync").toggleAttr("disabled")'>
+       <?=mk_option($cfg['sizefSync'],'no','No')?>
+       <?=mk_option($cfg['sizefSync'],'yes','Yes')?>
+</select>
+
+> Select <strong>yes</strong> if you want to sync files based on their size in <strong>MB</strong>.
+
+Sync files that are smaller than this size (In MB).
+: <select name="sizeinMSync" size="1" class='narrow mysizefSync' <?=$sizefSyncDisabled?>>
+	<?=mk_option($cfg['sizeinMSync'], 1, "1")?>
+	<?=mk_option($cfg['sizeinMSync'], 2, "2")?>
+	<?=mk_option($cfg['sizeinMSync'], 3, "3")?>
+	<?=mk_option($cfg['sizeinMSync'], 4, "4")?>
+	<?=mk_option($cfg['sizeinMSync'], 5, "5")?>
+  <?=mk_option($cfg['sizeinMSync'], 6, "6")?>
+  <?=mk_option($cfg['sizeinMSync'], 7, "7")?>
+  <?=mk_option($cfg['sizeinMSync'], 8, "8")?>
+  <?=mk_option($cfg['sizeinMSync'], 9, "9")?>
+  <?=mk_option($cfg['sizeinMSync'], 10, "10")?>
+  <?=mk_option($cfg['sizeinMSync'], 11, "11")?>
+
+	<?for ($ds=12;$ds<1026;$ds+=2):?>
+		<?=mk_option($cfg['sizeinMSync'], $ds, "$ds")?>
+	<?endfor;?>
+</select>
+
+> Select the maximum size a file has to be to get synched (in **Megabytes**).
+
 _(Move files based on sparseness)_:
 : <select name="sparsenessf" onchange='$(".mysparsenessf").toggleAttr("disabled")'>
   <?= mk_option($cfg['sparsenessf'], 'no', 'No') ?>
@@ -425,6 +455,18 @@ Move All from Primary->Secondary (cache:yes) shares pool percentage:
 <p>Set to the amount of disk space used on the Primary pool to initiate a move of all files in a <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) share.</p>
 <p>Filters will still run after, for any remaining pool's that do not meet this threshold.</p>
 <p>This threshold should at a minimum be <strong>5%</strong> larger than <strong><em>Only move at this threshold of used primary (cache) space</em></strong> setting above.</p>
+</blockquote>
+
+Synchronize Primary files to Secondary
+: <select name='synchronizeCache' size='1' class='narrow'>
+<?=mk_option($cfg['synchronizeCache'],"no",'No')?>
+<?=mk_option($cfg['synchronizeCache'],"yes","Yes")?>
+</select>
+
+<blockquote class="inline_help">
+<p>This will synchronize the Primary (cached) files on both Primary and Secondary (array) so they are backed up and parity protected.</p>
+<p>Reading and modification will still occur on Primary.</p>
+<p><u>Note:</u> <strong>ONLY modified files</strong> since the last sync are <strong>synchronized</strong>.</p>
 </blockquote>
 
 </div>

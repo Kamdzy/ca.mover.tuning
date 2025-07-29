@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2025.06.09">
-<!ENTITY md5       "ff39c9d60c3dd2d053f96fe561ef9ad0">
+<!ENTITY version   "2025.07.28">
+<!ENTITY md5       "a400eac91ecefa15304190a36639c966">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/ca.mover.tuning">
@@ -15,6 +15,20 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2025.07.28
+- new: Added a configurable option for global and share-only sync files based on maximum file size in MB. **_(masterwishx)_**
+- new: Updated UI text to clarify size units for both moving and syncing files.
+- new: Added explanatory text for the new sync size selection to guide users.
+
+###2025.07.27
+- new: Added a "Moved Only" notification option that allows notifications only when files are actually moved. **_(masterwishx)_**
+- new: Debug added for synchronize and notification modes.
+- new: Introduced a "Synchronize Primary files to Secondary" setting for shares override with cache enabled, enabling selective synchronization of modified files for backup and parity protection.
+
+###2025.06.14
+- fix: Fix age_mover is missing the "start" parameter in the cron schedule when force move is enabled. **_(masterwishx)_**
+- fix: Remove renaming of "mover.cron" to "mover.cron.disabled". No longer necessary with previous version.
+
 ###2025.06.07
 - fix: Fixed "mover start" from CLI freezing before the end stage at "resetRunOnceMoverSettings" function. **_(masterwishx)_**
 - fix: Fixed the mover process retrieving blank values for parent processes instead of "bash" and "crond" commands.
@@ -351,6 +365,9 @@ if ! pgrep age_mover; then
     if [[ -e "/var/run/$file" ]]; then rm -f "/var/run/$file"; fi
   done
 fi
+
+# Renaming mover.cron.disabled to mover.cron if exists (from old cron fix)
+if [[ -e /boot/config/plugins/dynamix/mover.cron.disabled ]]; then mv -f /boot/config/plugins/dynamix/mover.cron.disabled /boot/config/plugins/dynamix/mover.cron; fi
 
 echo "Fixing permissions"
 chmod +x /usr/local/sbin/mover

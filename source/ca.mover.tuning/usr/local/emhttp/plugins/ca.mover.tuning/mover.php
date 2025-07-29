@@ -24,7 +24,7 @@ function logger($string)
 }
 
 //function startMover($options = "start")
-function startMover(array $args)
+function startMover()
 {
     global $vars, $cfg, $cron, $bash, $argv, $args;
 
@@ -54,6 +54,7 @@ function startMover(array $args)
             if ($cfg['debuglogging'] == 'yes') {
                 logger("Option 1: $option1\n");
             }
+        // Fix for Unraid v6.x that emhttp run mover without "start" parametr
         } else if (version_compare($vars['version'], '7.0.0', '<')) {
             $args[0] = 'start';
             $option1 = $args[0];
@@ -92,8 +93,9 @@ function startMover(array $args)
             exit();
         }
     }
+
+    // If Force move enabled
     if ($cfg['force'] == "yes") {
-        $options = "";
         if ($cfg['forceParity'] == "no" && $vars['mdResyncPos']) {
             logger("Parity Check / Rebuild in Progress.  Not running forced move");
             exit();
@@ -162,6 +164,6 @@ if ($cfg['parity'] == 'no' && $vars['mdResyncPos']) {
 
 logger("Starting Mover ...");
 
-startMover($args);
+startMover();
 
 ?>
