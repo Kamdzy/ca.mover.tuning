@@ -1239,6 +1239,7 @@ createFilteredFilelist() {
         #FINDSTR+=" -printf '%T@|%s|%S|%n|%i|%p|\0' | awk -v RS='\0' -v FS='|' -v SPARSENESS=\$SPARSENESS -v PRIMARYSTORAGENAME=\$PRIMARYSTORAGENAME -v SECONDARYSTORAGENAME=\$SECONDARYSTORAGENAME -v SHARENAME=\$SHARENAME -v SHAREUSECACHE=\$SHAREUSECACHE -v PRIMARYSIZETHRESH=\$PRIMARYSIZETHRESH"
         # Fix shares space issue but same code as above
         FINDSTR="$FINDSTR -printf '%T@|%s|%S|%n|%i|%p|\0'"
+        
         FINDSTR="$FINDSTR | awk -v RS='\0' -v FS='|' \
         -v SPARSENESS='$SPARSENESS' \
         -v PRIMARYSTORAGENAME='$PRIMARYSTORAGENAME' \
@@ -1268,13 +1269,14 @@ createFilteredFilelist() {
                 }
             }
             return 0
-        }"
+        }
+        "
 
         if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && [ "$SPARSENESS" -gt 0 ]; then
             mvlogger "Adding Sparseness size ${SPARSENESS}"
-            FINDSTR="$FINDSTR ' \$3 > '$SPARSENESS' {"
+            FINDSTR="$FINDSTR \$3 > '$SPARSENESS' {"
         else
-            FINDSTR="$FINDSTR ' {"
+            FINDSTR="$FINDSTR {"
         fi
         # Get Birthtime with stat if CTIME option enabled
         if [ $CTIME == "yes" ]; then
