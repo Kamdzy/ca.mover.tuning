@@ -640,7 +640,7 @@ Resynchronize all Primary files to Secondary:
 </blockquote>
 
 Priority Disk Mappings:
-: <textarea name='priorityMappings' cols='80' rows='8' placeholder='/mnt/cache/GameVault/files -> disk3,disk4&#10;/mnt/cache/media/movies -> disk1,disk2'><?=htmlspecialchars($cfg['priorityMappings'])?></textarea>
+: <textarea name='priorityMappings' cols='160' rows='8' placeholder='/mnt/cache/GameVault/files -> disk3,disk4&#10;/mnt/cache/media/movies -> disk1,disk2'><?=htmlspecialchars($cfg['priorityMappings'])?></textarea>
 
 <blockquote class="inline_help">
 <p>Specify priority mappings for moving files from cache to specific array disks. Each mapping should be on a separate line in the format:</p>
@@ -653,6 +653,22 @@ Priority Disk Mappings:
 <li><strong>/mnt/cache/backups -> disk5</strong> - Move backups to disk5 only</li>
 </ul>
 <p>Leave empty to disable priority mappings and use the default disk selection.</p>
+</blockquote>
+
+Ignore List (Never Move):
+: <textarea name='ignoreList' cols='160' rows='8' placeholder='/mnt/cache/Downloads/incomplete&#10;/mnt/cache/temp&#10;/mnt/cache/data/important.txt'><?=htmlspecialchars($cfg['ignoreList'])?></textarea>
+
+<blockquote class="inline_help">
+<p>Specify files and folders that should never be moved from cache to array. Each path should be on a separate line.</p>
+<p><strong>Examples:</strong></p>
+<ul>
+<li><strong>/mnt/cache/Downloads/incomplete</strong> - Never move the incomplete downloads folder</li>
+<li><strong>/mnt/cache/temp</strong> - Never move the temp folder</li>
+<li><strong>/mnt/cache/data/important.txt</strong> - Never move a specific file</li>
+<li><strong>/mnt/cache/working</strong> - Never move any files in the working directory</li>
+</ul>
+<p>Files and folders matching these paths will be completely excluded from the mover process and will remain on cache permanently.</p>
+<p>Leave empty to disable ignore filtering.</p>
 </blockquote>
 
 </div>

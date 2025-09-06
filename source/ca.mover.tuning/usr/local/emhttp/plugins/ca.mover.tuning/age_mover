@@ -829,6 +829,18 @@ $line"
             mvlogger "Priority disk mappings configured: $(echo "$PRIORITY_MAPPINGS" | wc -l) mapping(s)"
         fi
     fi
+
+    # Load ignore list configuration
+    if [ -z $(cfg ignoreList) ]; then
+        if [[ ! "$config_file" =~ shareOverrideConfig ]]; then
+            IGNORE_LIST=""
+        fi
+    else
+        IGNORE_LIST=$(cfg ignoreList)
+        if [ -n "$IGNORE_LIST" ]; then
+            mvlogger "Ignore list configured: $(echo "$IGNORE_LIST" | wc -l) path(s)"
+        fi
+    fi
 }
 
 resetRunOnceMoverSettings() {
@@ -1247,7 +1259,8 @@ createFilteredFilelist() {
         -v SHARENAME='$SHARENAME' \
         -v SHAREUSECACHE='$SHAREUSECACHE' \
         -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH' \
-        -v PRIORITY_MAPPINGS='$PRIORITY_MAPPINGS' '
+        -v PRIORITY_MAPPINGS='$PRIORITY_MAPPINGS' \
+        -v IGNORE_LIST='$IGNORE_LIST' '
         function hasPriorityMapping(file_path) {
             if (PRIORITY_MAPPINGS == \"\") {
                 return 0
@@ -1266,6 +1279,27 @@ createFilteredFilelist() {
                     if (index(file_path, source_path) == 1) {
                         return 1
                     }
+                }
+            }
+            return 0
+        }
+        
+        function shouldIgnoreFile(file_path) {
+            if (IGNORE_LIST == \"\") {
+                return 0
+            }
+            
+            n = split(IGNORE_LIST, ignore_paths, \"\\n\")
+            for (i = 1; i <= n; i++) {
+                ignore_path = ignore_paths[i]
+                if (ignore_path == \"\") continue
+                
+                # Remove leading and trailing whitespace
+                gsub(/^ +| +$/, \"\", ignore_path)
+                
+                # Check if file path starts with ignore path
+                if (index(file_path, ignore_path) == 1) {
+                    return 1
                 }
             }
             return 0
@@ -1307,7 +1341,7 @@ createFilteredFilelist() {
         #                \$2 = result;
         #            "
         #        fi
-        FINDSTR="$FINDSTR printf \"%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, \$2, \$3, \$4, \$5, \$6, hasPriorityMapping(\$6) }'"
+        FINDSTR="$FINDSTR if (!shouldIgnoreFile(\$6)) { printf \"%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, \$2, \$3, \$4, \$5, \$6, hasPriorityMapping(\$6) } }'"
 
         # Exclude Downloads/incomplete folder
         FINDSTR+=" | grep -iv 'Downloads/incomplete'"
@@ -1425,7 +1459,7 @@ decideMoveActions() {
     # Fields: $1:PRIMARYSTORAGENAME $2:SECONDARYSTORAGENAME $3:SHARENAME $4:SHAREUSECACHE $5:MODIFICATIONTIME
     # $6:PRIMARYSIZETHRESH $7:FILESIZE $8:SPARSENESS $9:NBLINKS $10:INODE $11:FILEPATH $12:HASPRIORITY
 
-    awk -F"|" -v AGE="$AGE" -v STATS_FILE="$STATS_FILE" -v LASTCACHESYNC="$LASTCACHESYNC" -v SOFTSTOPFILE="$SOFTSTOPFILE" -v SYNCHRONIZECACHE="$SYNCHRONIZECACHE" -v REBALANCESHARES="$REBALANCESHARES" -v RESYNCHRONIZECACHE="$RESYNCHRONIZECACHE" -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" '
+    awk -F"|" -v AGE="$AGE" -v STATS_FILE="$STATS_FILE" -v LASTCACHESYNC="$LASTCACHESYNC" -v SOFTSTOPFILE="$SOFTSTOPFILE" -v SYNCHRONIZECACHE="$SYNCHRONIZECACHE" -v REBALANCESHARES="$REBALANCESHARES" -v RESYNCHRONIZECACHE="$RESYNCHRONIZECACHE" -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" -v IGNORE_LIST="$IGNORE_LIST" '
         BEGIN {
             FS = OFS = "|"
 
