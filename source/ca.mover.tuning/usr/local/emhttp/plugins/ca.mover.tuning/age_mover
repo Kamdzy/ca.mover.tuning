@@ -841,7 +841,9 @@ $line"
     else
         IGNORE_LIST=$(cfg ignoreList)
         if [ -n "$IGNORE_LIST" ]; then
-            mvlogger "Ignore list configured: $(echo "$IGNORE_LIST" | wc -l) path(s)"
+            # Count pipe-separated entries
+            IGNORE_COUNT=$(echo "$IGNORE_LIST" | awk -F'|' '{print NF}')
+            mvlogger "Ignore list configured: $IGNORE_COUNT path(s)"
         fi
     fi
 }
@@ -1263,7 +1265,7 @@ createFilteredFilelist() {
         -v SHAREUSECACHE='$SHAREUSECACHE' \
         -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH' \
         -v PRIORITY_MAPPINGS='$PRIORITY_MAPPINGS' \
-        -v IGNORE_LIST="'"'$IGNORE_LIST'"'" '
+        -v IGNORE_LIST="$IGNORE_LIST" '
         function hasPriorityMapping(file_path) {
             if (PRIORITY_MAPPINGS == \"\") {
                 return 0
@@ -1292,7 +1294,7 @@ createFilteredFilelist() {
                 return 0
             }
             
-            n = split(IGNORE_LIST, ignore_paths, \"\\n\")
+            n = split(IGNORE_LIST, ignore_paths, \"|\")
             for (i = 1; i <= n; i++) {
                 ignore_path = ignore_paths[i]
                 if (ignore_path == \"\") continue
