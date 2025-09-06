@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2025.09.08">
-<!ENTITY md5       "f935f2d18b6f8ada7d7ecc01035d156b">
+<!ENTITY version   "2025.09.09">
+<!ENTITY md5       "d213a69ea5d2377869d8a1494e7aad60">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/ca.mover.tuning">
@@ -17,6 +17,7 @@
 <CHANGES>
 ###2025.09.06
 - new: Implemented disk priority mapping, allowing the user to choose the preferred disk to which the files will move to based on their path
+- new: Implemented an ignore list feature to exclude specific files or directories from being moved to array
 
 ###2025.08.05
 - new: Updated unraid mover code from original mover for "mover start -e" command. **_(masterwishx)_**

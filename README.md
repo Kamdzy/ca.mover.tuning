@@ -34,6 +34,7 @@ If an error occurs in copying a file, the partial file, if present, is deleted a
 ## Changelog
 - 2025.09.06
     - new: Implemented disk priority mapping, allowing the user to choose the preferred disk to which the files will move to based on their path
+    - new: Implemented an ignore list feature to exclude specific files or directories from being moved to array
 
 
 - 2025.08.05
