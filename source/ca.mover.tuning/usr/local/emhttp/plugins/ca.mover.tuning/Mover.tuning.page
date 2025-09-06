@@ -640,16 +640,15 @@ Resynchronize all Primary files to Secondary:
 </blockquote>
 
 Priority Disk Mappings:
-: <textarea name='priorityMappings' cols='160' rows='8' placeholder='/mnt/cache/GameVault/files -> disk3,disk4&#10;/mnt/cache/media/movies -> disk1,disk2'><?=htmlspecialchars($cfg['priorityMappings'])?></textarea>
+: <input type='text' name='priorityMappings' size='120' placeholder='/mnt/cache/GameVault/files -> disk3,disk4:::/mnt/cache/media/movies -> disk1,disk2' value='<?=htmlspecialchars($cfg['priorityMappings'])?>'/>
 
 <blockquote class="inline_help">
-<p>Specify priority mappings for moving files from cache to specific array disks. Each mapping should be on a separate line in the format:</p>
+<p>Specify priority mappings for moving files from cache to specific array disks. Separate multiple mappings with triple colons (:::) in the format:</p>
 <p><strong>/path/to/source/folder -> disk1,disk2,disk3</strong></p>
 <p>When moving files from cache to array, the mover will first try to place files in the specified disks if space allows. If the preferred disks don't have enough space, it will fall back to the normal disk selection mechanism.</p>
 <p><strong>Examples:</strong></p>
 <ul>
-<li><strong>/mnt/cache/GameVault/files -> disk3,disk4</strong> - Move GameVault files to disk3 or disk4</li>
-<li><strong>/mnt/cache/media/movies -> disk1,disk2</strong> - Move movies to disk1 or disk2</li>
+<li><strong>/mnt/cache/GameVault/files -> disk3,disk4:::/mnt/cache/media/movies -> disk1,disk2</strong> - GameVault to disk3/4, movies to disk1/2</li>
 <li><strong>/mnt/cache/backups -> disk5</strong> - Move backups to disk5 only</li>
 </ul>
 <p>Leave empty to disable priority mappings and use the default disk selection.</p>
@@ -659,7 +658,7 @@ Ignore List (Never Move):
 : <input type='text' name='ignoreList' size='120' placeholder='/mnt/cache/Downloads/incomplete:::/mnt/cache/temp:::/mnt/cache/data/important.txt' value='<?=htmlspecialchars($cfg['ignoreList'])?>'/>
 
 <blockquote class="inline_help">
-<p>Specify files and folders that should never be moved from cache to array. Separate multiple paths with pipe characters (:::).</p>
+<p>Specify files and folders that should never be moved from cache to array. Separate multiple paths with triple colons (:::).</p>
 <p><strong>Examples:</strong></p>
 <ul>
 <li><strong>/mnt/cache/Downloads/incomplete:::/mnt/cache/temp</strong> - Never move the incomplete downloads and temp folders</li>

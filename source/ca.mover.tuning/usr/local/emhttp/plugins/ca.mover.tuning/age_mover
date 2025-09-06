@@ -258,6 +258,10 @@ getPriorityDestination() {
         return
     fi
     
+    # Convert ::: delimited string to newline delimited for processing
+    local mappings_converted
+    mappings_converted=$(echo "$PRIORITY_MAPPINGS" | sed 's/:::/\n/g')
+    
     # Parse priority mappings and check for matches
     while IFS= read -r mapping_line; do
         # Skip empty lines
@@ -319,7 +323,7 @@ getPriorityDestination() {
                 break
             fi
         fi
-    done <<< "$PRIORITY_MAPPINGS"
+    done <<< "$mappings_converted"
     
     # Return default destination if no mapping found or no disks available
     echo "$default_dest"
@@ -829,7 +833,9 @@ $line"
     else
         PRIORITY_MAPPINGS=$(cfg priorityMappings)
         if [ -n "$PRIORITY_MAPPINGS" ]; then
-            mvlogger "Priority disk mappings configured: $(echo "$PRIORITY_MAPPINGS" | wc -l) mapping(s)"
+            # Count ::: delimited entries
+            PRIORITY_COUNT=$(echo "$PRIORITY_MAPPINGS" | awk -F':::' '{print NF}')
+            mvlogger "Priority disk mappings configured: $PRIORITY_COUNT mapping(s)"
         fi
     fi
 
@@ -1264,14 +1270,14 @@ createFilteredFilelist() {
         -v SHARENAME='$SHARENAME' \
         -v SHAREUSECACHE='$SHAREUSECACHE' \
         -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH' \
-        -v PRIORITY_MAPPINGS='$PRIORITY_MAPPINGS' \
+        -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" \
         -v IGNORE_LIST="$IGNORE_LIST" '
         function hasPriorityMapping(file_path) {
             if (PRIORITY_MAPPINGS == \"\") {
                 return 0
             }
             
-            n = split(PRIORITY_MAPPINGS, mappings, \"\\n\")
+            n = split(PRIORITY_MAPPINGS, mappings, \":::\")
             for (i = 1; i <= n; i++) {
                 mapping = mappings[i]
                 if (mapping == \"\") continue
@@ -1484,8 +1490,8 @@ decideMoveActions() {
                 return default_dest
             }
             
-            # Split priority mappings by newline
-            n = split(PRIORITY_MAPPINGS, mappings, "\n")
+            # Split priority mappings by :::
+            n = split(PRIORITY_MAPPINGS, mappings, ":::")
             
             for (i = 1; i <= n; i++) {
                 mapping = mappings[i]
@@ -1525,7 +1531,7 @@ decideMoveActions() {
                 return 0
             }
             
-            n = split(PRIORITY_MAPPINGS, mappings, "\n")
+            n = split(PRIORITY_MAPPINGS, mappings, ":::")
             for (i = 1; i <= n; i++) {
                 mapping = mappings[i]
                 if (mapping == "") continue
