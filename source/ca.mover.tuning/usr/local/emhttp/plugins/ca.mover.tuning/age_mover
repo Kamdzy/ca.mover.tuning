@@ -1450,19 +1450,6 @@ decideMoveActions() {
     # $6:PRIMARYSIZETHRESH $7:FILESIZE $8:SPARSENESS $9:NBLINKS $10:INODE $11:FILEPATH $12:HASPRIORITY
 
     awk -F"|" -v AGE="$AGE" -v STATS_FILE="$STATS_FILE" -v LASTCACHESYNC="$LASTCACHESYNC" -v SOFTSTOPFILE="$SOFTSTOPFILE" -v SYNCHRONIZECACHE="$SYNCHRONIZECACHE" -v REBALANCESHARES="$REBALANCESHARES" -v RESYNCHRONIZECACHE="$RESYNCHRONIZECACHE" -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" -v IGNORE_LIST="$IGNORE_LIST" '
-        BEGIN {
-            FS = OFS = "|"
-
-            if (system("[ -e \"" SOFTSTOPFILE "\" ]") == 0) {
-                exit 1
-            }
-            # Initialize previous inode and dictionary for pool sums
-            previous_inode = 0
-
-            # Print new header
-            printf "PRIMARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|FILESIZE|POOLSUM|THRESHOLD|NBLINKS|INODE|ACTION|FROM|TO|FILEPATH\n"
-        }
-
         # Function to get priority destination for a file path
         function getPriorityDestination(file_path, file_size, default_dest) {
             if (PRIORITY_MAPPINGS == "") {
@@ -1488,15 +1475,44 @@ decideMoveActions() {
                     
                     # Check if file path starts with the source path
                     if (index(file_path, source_path) == 1) {
-                        # Split disk list by comma and return first disk
-                        # Space checking is handled by bash getPriorityDestination or Unraid mover
+                        # Split disk list by comma and try each disk in order
                         n_disks = split(disk_list, disks, ",")
-                        if (n_disks > 0) {
-                            # Return the first disk from the priority list
-                            first_disk = disks[1]
-                            gsub(/^ +| +$/, "", first_disk)
-                            return "/mnt/" first_disk
+                        
+                        for (j = 1; j <= n_disks; j++) {
+                            disk_name = disks[j]
+                            gsub(/^ +| +$/, "", disk_name)
+                            disk_path = "/mnt/" disk_name
+                            
+                            # Get current available space for this disk
+                            cmd = "df --output=avail " disk_path " 2>/dev/null | tail -n 1"
+                            cmd | getline available_kb
+                            close(cmd)
+                            
+                            if (available_kb > 0) {
+                                available_bytes = available_kb * 1024
+                                
+                                # Get pending usage for this disk (tracked across files)
+                                pending_usage = pending_disk_usage[disk_path]
+                                if (pending_usage == "") pending_usage = 0
+                                
+                                effective_available = available_bytes - pending_usage
+                                
+                                # Add 10% buffer for safety + minimum 100MB buffer
+                                buffer = file_size * 0.1
+                                if (buffer < 104857600) buffer = 104857600  # 100MB minimum
+                                required_space = file_size + buffer
+                                
+                                if (effective_available > required_space) {
+                                    # Update pending usage for this disk
+                                    pending_disk_usage[disk_path] = pending_usage + file_size
+                                    
+                                    return disk_path
+                                }
+                            }
                         }
+                        
+                        # No priority disks had sufficient space, return default
+                        return default_dest
                     }
                 }
             }
@@ -1526,6 +1542,44 @@ decideMoveActions() {
                 }
             }
             return 0
+        }
+
+        # Function to check if a file should be ignored
+        function shouldIgnoreFile(file_path) {
+            if (IGNORE_LIST == "") {
+                return 0
+            }
+            
+            n = split(IGNORE_LIST, ignore_paths, ":::")
+            for (i = 1; i <= n; i++) {
+                ignore_path = ignore_paths[i]
+                if (ignore_path == "") continue
+                
+                # Remove leading and trailing whitespace
+                gsub(/^ +| +$/, "", ignore_path)
+                
+                # Check if file path starts with ignore path
+                if (index(file_path, ignore_path) == 1) {
+                    return 1
+                }
+            }
+            return 0
+        }
+
+        BEGIN {
+            FS = OFS = "|"
+
+            # Initialize pending disk usage tracking
+            delete pending_disk_usage
+
+            if (system("[ -e \"" SOFTSTOPFILE "\" ]") == 0) {
+                exit 1
+            }
+            # Initialize previous inode and dictionary for pool sums
+            previous_inode = 0
+
+            # Print new header
+            printf "PRIMARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|FILESIZE|POOLSUM|THRESHOLD|NBLINKS|INODE|ACTION|FROM|TO|FILEPATH\n"
         }
 
         NR > 1 { # Main loop, skip header line
