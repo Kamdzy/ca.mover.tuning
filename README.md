@@ -32,6 +32,10 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.09.06
+    - new: Implemented disk priority mapping, allowing the user to choose the preferred disk to which the files will move to based on their path
+
+
 - 2025.08.05
     - new: Updated unraid mover code from original mover for "mover start -e" command. **_(masterwishx)_**
     - fix: Enhanced folder cleanup logic to prevent errors by checking folder existence before removal.
