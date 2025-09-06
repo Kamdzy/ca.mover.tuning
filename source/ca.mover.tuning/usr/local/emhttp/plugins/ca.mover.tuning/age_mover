@@ -362,35 +362,14 @@ getMoverSettings() {
     local config_file="$1"
     cfg() {
         local param="$1"
-        local value=""
-        local in_value=false
-        
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^${param}= ]]; then
-                # Found the parameter, extract the value
-                value="${line#*=}"
-                # Remove surrounding quotes
-                value="${value#\"}"
-                value="${value%\"}"
-                in_value=true
-            elif [[ "$in_value" == true && "$line" =~ ^[a-zA-Z] ]]; then
-                # Hit next parameter, stop reading
+        local value
+        while IFS='=' read -r key val; do
+            [ "$key" == "$param" ] && {
+                value="$val"
                 break
-            elif [[ "$in_value" == true ]]; then
-                # Continue reading multi-line value, preserving newlines
-                if [[ -n "$value" ]]; then
-                    value="$value
-$line"
-                else
-                    value="$line"
-                fi
-            fi
+            }
         done <"$config_file"
-        
-        # Additional cleanup for multiline values that may have trailing quotes
-        value="${value%\"}"
-        
-        echo "$value"
+        echo "${value//\"/}" # Print value or empty string if not found, without quotes
     }
 
     timezone=$(grep "timeZone=" "/boot/config/ident.cfg" | cut -d '"' -f 2)
@@ -1270,8 +1249,8 @@ createFilteredFilelist() {
         -v SHARENAME='$SHARENAME' \
         -v SHAREUSECACHE='$SHAREUSECACHE' \
         -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH' \
-        -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" \
-        -v IGNORE_LIST="$IGNORE_LIST" '
+        -v PRIORITY_MAPPINGS=\""$PRIORITY_MAPPINGS"\" \
+        -v IGNORE_LIST=\""$IGNORE_LIST"\" '
         function hasPriorityMapping(file_path) {
             if (PRIORITY_MAPPINGS == \"\") {
                 return 0
