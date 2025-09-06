@@ -1263,7 +1263,7 @@ createFilteredFilelist() {
         -v SHAREUSECACHE='$SHAREUSECACHE' \
         -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH' \
         -v PRIORITY_MAPPINGS='$PRIORITY_MAPPINGS' \
-        -v IGNORE_LIST='"'"'$IGNORE_LIST'"'"' '
+        -v IGNORE_LIST="'"'$IGNORE_LIST'"'" '
         function hasPriorityMapping(file_path) {
             if (PRIORITY_MAPPINGS == \"\") {
                 return 0
