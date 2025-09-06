@@ -842,7 +842,7 @@ $line"
         IGNORE_LIST=$(cfg ignoreList)
         if [ -n "$IGNORE_LIST" ]; then
             # Count pipe-separated entries
-            IGNORE_COUNT=$(echo "$IGNORE_LIST" | awk -F'|' '{print NF}')
+            IGNORE_COUNT=$(echo "$IGNORE_LIST" | awk -F':::' '{print NF}')
             mvlogger "Ignore list configured: $IGNORE_COUNT path(s)"
         fi
     fi
@@ -1294,7 +1294,7 @@ createFilteredFilelist() {
                 return 0
             }
             
-            n = split(IGNORE_LIST, ignore_paths, \"|\")
+            n = split(IGNORE_LIST, ignore_paths, \":::\")
             for (i = 1; i <= n; i++) {
                 ignore_path = ignore_paths[i]
                 if (ignore_path == \"\") continue

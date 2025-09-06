@@ -656,14 +656,14 @@ Priority Disk Mappings:
 </blockquote>
 
 Ignore List (Never Move):
-: <input type='text' name='ignoreList' size='120' placeholder='/mnt/cache/Downloads/incomplete|/mnt/cache/temp|/mnt/cache/data/important.txt' value='<?=htmlspecialchars($cfg['ignoreList'])?>'/>
+: <input type='text' name='ignoreList' size='120' placeholder='/mnt/cache/Downloads/incomplete:::/mnt/cache/temp:::/mnt/cache/data/important.txt' value='<?=htmlspecialchars($cfg['ignoreList'])?>'/>
 
 <blockquote class="inline_help">
-<p>Specify files and folders that should never be moved from cache to array. Separate multiple paths with pipe characters (|).</p>
+<p>Specify files and folders that should never be moved from cache to array. Separate multiple paths with pipe characters (:::).</p>
 <p><strong>Examples:</strong></p>
 <ul>
-<li><strong>/mnt/cache/Downloads/incomplete|/mnt/cache/temp</strong> - Never move the incomplete downloads and temp folders</li>
-<li><strong>/mnt/cache/data/important.txt|/mnt/cache/working</strong> - Never move a specific file and the working directory</li>
+<li><strong>/mnt/cache/Downloads/incomplete:::/mnt/cache/temp</strong> - Never move the incomplete downloads and temp folders</li>
+<li><strong>/mnt/cache/data/important.txt:::/mnt/cache/working</strong> - Never move a specific file and the working directory</li>
 </ul>
 <p>Files and folders matching these paths will be completely excluded from the mover process and will remain on cache permanently.</p>
 <p>Leave empty to disable ignore filtering.</p>
