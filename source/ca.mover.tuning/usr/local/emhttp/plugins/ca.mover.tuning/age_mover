@@ -383,6 +383,9 @@ $line"
             fi
         done <"$config_file"
         
+        # Additional cleanup for multiline values that may have trailing quotes
+        value="${value%\"}"
+        
         echo "$value"
     }
 
