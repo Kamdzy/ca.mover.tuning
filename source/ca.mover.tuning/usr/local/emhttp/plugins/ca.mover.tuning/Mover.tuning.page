@@ -639,6 +639,22 @@ Resynchronize all Primary files to Secondary:
 <p>This can be a long operation. Run-once setting will reset back to No after next run.
 </blockquote>
 
+Priority Disk Mappings:
+: <textarea name='priorityMappings' cols='80' rows='8' placeholder='/mnt/cache/GameVault/files -> disk3,disk4&#10;/mnt/cache/media/movies -> disk1,disk2'><?=htmlspecialchars($cfg['priorityMappings'])?></textarea>
+
+<blockquote class="inline_help">
+<p>Specify priority mappings for moving files from cache to specific array disks. Each mapping should be on a separate line in the format:</p>
+<p><strong>/path/to/source/folder -> disk1,disk2,disk3</strong></p>
+<p>When moving files from cache to array, the mover will first try to place files in the specified disks if space allows. If the preferred disks don't have enough space, it will fall back to the normal disk selection mechanism.</p>
+<p><strong>Examples:</strong></p>
+<ul>
+<li><strong>/mnt/cache/GameVault/files -> disk3,disk4</strong> - Move GameVault files to disk3 or disk4</li>
+<li><strong>/mnt/cache/media/movies -> disk1,disk2</strong> - Move movies to disk1 or disk2</li>
+<li><strong>/mnt/cache/backups -> disk5</strong> - Move backups to disk5 only</li>
+</ul>
+<p>Leave empty to disable priority mappings and use the default disk selection.</p>
+</blockquote>
+
 </div>
 </div>
 

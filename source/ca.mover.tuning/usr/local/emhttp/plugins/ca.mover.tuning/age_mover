@@ -238,20 +238,152 @@ mvDebuglogger() {
     fi
 }
 
+# Global associative array to track pending space usage per disk (in bytes)
+# This prevents over-allocation when multiple files are queued for the same disk
+declare -A PENDING_DISK_USAGE
+
+# Function to get preferred destination disk based on priority mappings
+# $1 is the file path
+# $2 is the file size in bytes
+# $3 is the default destination (e.g., "/mnt/user0")
+# Returns the preferred destination disk or the default if no mapping found
+getPriorityDestination() {
+    local file_path="$1"
+    local file_size="$2"
+    local default_dest="$3"
+    
+    # If no priority mappings configured, return default
+    if [ -z "$PRIORITY_MAPPINGS" ]; then
+        echo "$default_dest"
+        return
+    fi
+    
+    # Parse priority mappings and check for matches
+    while IFS= read -r mapping_line; do
+        # Skip empty lines
+        [ -z "$mapping_line" ] && continue
+        
+        # Parse mapping format: "/path/to/source -> disk1,disk2,disk3"
+        if [[ "$mapping_line" =~ ^([^-]+)-\>(.+)$ ]]; then
+            local source_path=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  # Remove only leading/trailing spaces
+            local disk_list=$(echo "${BASH_REMATCH[2]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')    # Remove only leading/trailing spaces
+            
+            # Check if file path starts with the source path
+            if [[ "$file_path" == "$source_path"* ]]; then
+                mvlogger "Priority mapping match found for '$file_path' -> disks: $disk_list"
+                
+                # Split disk list by comma and try each disk
+                IFS=',' read -ra DISKS <<< "$disk_list"
+                for disk_name in "${DISKS[@]}"; do
+                    disk="/mnt/$disk_name"
+                    
+                    # Check if disk exists and is mounted
+                    if [ -d "$disk" ] && mountpoint -q "$disk"; then
+                        # Get current available space in bytes
+                        local available_space=$(df --output=avail "$disk" 2>/dev/null | tail -n 1)
+                        if [ -n "$available_space" ] && [ "$available_space" -gt 0 ]; then
+                            available_space=$((available_space * 1024))  # Convert KB to bytes
+                            
+                            # Subtract pending moves to this disk from available space
+                            local pending_usage=${PENDING_DISK_USAGE["$disk"]:-0}
+                            local effective_available=$((available_space - pending_usage))
+                            
+                            # Add 10% buffer for safety and account for filesystem overhead
+                            # Minimum 100MB buffer for very large files
+                            local buffer=$((file_size / 10))
+                            if [ "$buffer" -lt 104857600 ]; then  # 100MB minimum buffer
+                                buffer=104857600
+                            fi
+                            local required_space=$((file_size + buffer))
+                            
+                            if [ "$effective_available" -gt "$required_space" ]; then
+                                mvlogger "Selected priority disk: $disk (file: $(($file_size / 1048576))MB, available: $(($available_space / 1048576))MB, pending: $(($pending_usage / 1048576))MB, effective: $(($effective_available / 1048576))MB)"
+                                
+                                # Track this allocation for future space calculations
+                                PENDING_DISK_USAGE["$disk"]=$((pending_usage + file_size))
+                                
+                                echo "$disk"
+                                return
+                            else
+                                mvlogger "Priority disk $disk has insufficient space (file: $(($file_size / 1048576))MB, available: $(($available_space / 1048576))MB, pending: $(($pending_usage / 1048576))MB, effective: $(($effective_available / 1048576))MB)"
+                            fi
+                        else
+                            mvlogger "Could not determine available space for priority disk $disk"
+                        fi
+                    else
+                        mvlogger "Priority disk $disk not found or not mounted"
+                    fi
+                done
+                
+                mvlogger "No priority disks available for '$file_path', using fallback: $default_dest"
+                break
+            fi
+        fi
+    done <<< "$PRIORITY_MAPPINGS"
+    
+    # Return default destination if no mapping found or no disks available
+    echo "$default_dest"
+}
+
+# Function to update pending disk usage after a file move completes
+# $1 is the destination disk path (e.g., "/mnt/disk3")
+# $2 is the file size in bytes
+# $3 is "success" or "failure" - whether the move succeeded
+updatePendingDiskUsage() {
+    local disk="$1"
+    local file_size="$2"
+    local status="$3"
+    
+    if [ -n "${PENDING_DISK_USAGE["$disk"]}" ]; then
+        if [ "$status" = "success" ]; then
+            # Move succeeded - the space is now actually used, remove from pending
+            PENDING_DISK_USAGE["$disk"]=$((${PENDING_DISK_USAGE["$disk"]} - file_size))
+            mvlogger "Updated pending usage for $disk: removed $(($file_size / 1048576))MB (move successful)"
+        elif [ "$status" = "failure" ]; then
+            # Move failed - space is still available, remove from pending
+            PENDING_DISK_USAGE["$disk"]=$((${PENDING_DISK_USAGE["$disk"]} - file_size))
+            mvlogger "Updated pending usage for $disk: removed $(($file_size / 1048576))MB (move failed, space still available)"
+        fi
+        
+        # Clean up if usage drops to zero or below
+        if [ "${PENDING_DISK_USAGE["$disk"]}" -le 0 ]; then
+            unset PENDING_DISK_USAGE["$disk"]
+        fi
+    fi
+}
+
 #Moved variable assignment into a function
 getMoverSettings() {
     #Use the config file instead of input variables (ease execution from command line)
     local config_file="$1"
     cfg() {
         local param="$1"
-        local value
-        while IFS='=' read -r key val; do
-            [ "$key" == "$param" ] && {
-                value="$val"
+        local value=""
+        local in_value=false
+        
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^${param}= ]]; then
+                # Found the parameter, extract the value
+                value="${line#*=}"
+                # Remove surrounding quotes
+                value="${value#\"}"
+                value="${value%\"}"
+                in_value=true
+            elif [[ "$in_value" == true && "$line" =~ ^[a-zA-Z] ]]; then
+                # Hit next parameter, stop reading
                 break
-            }
+            elif [[ "$in_value" == true ]]; then
+                # Continue reading multi-line value, preserving newlines
+                if [[ -n "$value" ]]; then
+                    value="$value
+$line"
+                else
+                    value="$line"
+                fi
+            fi
         done <"$config_file"
-        echo "${value//\"/}" # Print value or empty string if not found, without quotes
+        
+        echo "$value"
     }
 
     timezone=$(grep "timeZone=" "/boot/config/ident.cfg" | cut -d '"' -f 2)
@@ -686,6 +818,17 @@ getMoverSettings() {
         MOVE_FILES_TOOL=$(cfg movefilesTool)
         mvlogger "Move files tool: $MOVE_FILES_TOOL"
     fi
+
+    if [ -z $(cfg priorityMappings) ]; then
+        if [[ ! "$config_file" =~ shareOverrideConfig ]]; then
+            PRIORITY_MAPPINGS=""
+        fi
+    else
+        PRIORITY_MAPPINGS=$(cfg priorityMappings)
+        if [ -n "$PRIORITY_MAPPINGS" ]; then
+            mvlogger "Priority disk mappings configured: $(echo "$PRIORITY_MAPPINGS" | wc -l) mapping(s)"
+        fi
+    fi
 }
 
 resetRunOnceMoverSettings() {
@@ -729,7 +872,7 @@ createFilteredFilelist() {
     mvlogger "$(titleLine 'FILTERING FILES' '*')"
 
     # create a file containing the list off all shareUseCache yes or prefer whith this format:
-    echo "PRIMARYSTORAGENAME|SECONDARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|PRIMARYSIZETHRESH|FILESIZE|SPARSENESS|NBLINKS|INODE|FILEPATH" >"$FILTERED_FILELIST"
+    echo "PRIMARYSTORAGENAME|SECONDARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|PRIMARYSIZETHRESH|FILESIZE|SPARSENESS|NBLINKS|INODE|FILEPATH|HASPRIORITY" >"$FILTERED_FILELIST"
 
     for SHARECFG in "$CFGPATH"/*.cfg; do
         if [ -e $SOFTSTOPFILE ]; then
@@ -917,7 +1060,7 @@ createFilteredFilelist() {
                         CACHESHARERESERVEDSPACE=$(du -sh "$SHAREPATH" | awk '{print $1}' | human_to_bytes)
                     fi
                 fi
-                echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|only|9999999999|$PRIMARYSIZETHRESH|$CACHESHARERESERVEDSPACE|0|0|0|${SHAREPATH}" >>"$FILTERED_FILELIST"
+                echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|only|9999999999|$PRIMARYSIZETHRESH|$CACHESHARERESERVEDSPACE|0|0|0|${SHAREPATH}|0" >>"$FILTERED_FILELIST"
                 mvlogger "$PRIMARYSTORAGENAME/$SHARENAME used: $(bytes_to_human $CACHESHARERESERVEDSPACE)"
                 continue
             fi
@@ -1015,7 +1158,7 @@ createFilteredFilelist() {
             mvlogger "Skipping Hidden Files. File size are taken into account in the calculation of the threshold"
             FINDSTR="$FINDSTR -not -path '*/\.*'"
             HIDDENFILES_RESERVED_SPACE=$(find "/mnt/$PRIMARYSTORAGENAME/$SHARENAME" -type f -path '*/\.*' -print0 | xargs -0 du -sh | awk '{ sum += $1 } END { print sum }')
-            echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_PATH_RESERVED_SPACE|0|0|0|/mnt/$PRIMARYSTORAGENAME/$SHARENAME hidden files" >>"$FILTERED_FILELIST"
+            echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_PATH_RESERVED_SPACE|0|0|0|/mnt/$PRIMARYSTORAGENAME/$SHARENAME hidden files|0" >>"$FILTERED_FILELIST"
             mvlogger "    Hidden files are using $(bytes_to_human $HIDDENFILES_RESERVED_SPACE)"
         fi
 
@@ -1064,7 +1207,7 @@ createFilteredFilelist() {
                 fi
 
                 if [ -n "$SKIPPED_PATH_RESERVED_SPACE" ]; then
-                    echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_PATH_RESERVED_SPACE|0|0|0|${skipped_path}" >>"$FILTERED_FILELIST"
+                    echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_PATH_RESERVED_SPACE|0|0|0|${skipped_path}|0" >>"$FILTERED_FILELIST"
                     TOTAL_SKIPPED_PATH_RESERVED_SPACE=$((TOTAL_SKIPPED_PATH_RESERVED_SPACE + SKIPPED_PATH_RESERVED_SPACE))
                 else
                     mvlogger "Error calculating size for $skipped_path"
@@ -1083,7 +1226,7 @@ createFilteredFilelist() {
                 FINDSTR="$FINDSTR -not -name '*.$escaped_ext'"
                 SKIPPED_FILETYPES_RESERVED_SPACE="$(find "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" -type f -name '*.$ext' -print0 | xargs -0 du -sh | awk '{print $1}' | human_to_bytes | awk '{ sum += $1 } END { print sum }')"
                 if [ $? -eq 0 ]; then
-                    echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_FILETYPES_RESERVED_SPACE|0|0|0|$SHAREPATH/**/*.$ext" >>"$FILTERED_FILELIST"
+                    echo "$PRIMARYSTORAGENAME|$PRIMARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$SKIPPED_FILETYPES_RESERVED_SPACE|0|0|0|$SHAREPATH/**/*.$ext|0" >>"$FILTERED_FILELIST"
                     TOTAL_SKIPPED_FILETYPES_RESERVED_SPACE=$((TOTAL_SKIPPED_FILETYPES_RESERVED_SPACE + SKIPPED_FILETYPES_RESERVED_SPACE))
                 else
                     mvlogger "Error calculating size for ${globalSkipFileTypes}"
@@ -1102,7 +1245,30 @@ createFilteredFilelist() {
         -v SECONDARYSTORAGENAME='$SECONDARYSTORAGENAME' \
         -v SHARENAME='$SHARENAME' \
         -v SHAREUSECACHE='$SHAREUSECACHE' \
-        -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH'"
+        -v PRIMARYSIZETHRESH='$PRIMARYSIZETHRESH' \
+        -v PRIORITY_MAPPINGS='$PRIORITY_MAPPINGS' '
+        function hasPriorityMapping(file_path) {
+            if (PRIORITY_MAPPINGS == \"\") {
+                return 0
+            }
+            
+            n = split(PRIORITY_MAPPINGS, mappings, \"\\n\")
+            for (i = 1; i <= n; i++) {
+                mapping = mappings[i]
+                if (mapping == \"\") continue
+                
+                arrow_pos = index(mapping, \"->\")
+                if (arrow_pos > 0) {
+                    source_path = substr(mapping, 1, arrow_pos - 1)
+                    gsub(/^ +| +$/, \"\", source_path)
+                    
+                    if (index(file_path, source_path) == 1) {
+                        return 1
+                    }
+                }
+            }
+            return 0
+        }'"
 
         if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && [ "$SPARSENESS" -gt 0 ]; then
             mvlogger "Adding Sparseness size ${SPARSENESS}"
@@ -1139,7 +1305,7 @@ createFilteredFilelist() {
         #                \$2 = result;
         #            "
         #        fi
-        FINDSTR="$FINDSTR printf \"%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, \$2, \$3, \$4, \$5, \$6}'"
+        FINDSTR="$FINDSTR printf \"%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, \$2, \$3, \$4, \$5, \$6, hasPriorityMapping(\$6)}'"
 
         # Exclude Downloads/incomplete folder
         FINDSTR+=" | grep -iv 'Downloads/incomplete'"
@@ -1166,8 +1332,8 @@ createFilteredFilelist() {
         fi
     done
 
-    # Sort the file list by PRIMARYSTORAGENAME, shareusecache, creation/modification time, and inode, keeping /mnt/disk at the end
-    sort -t '|' -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
+    # Sort the file list by PRIORITY (descending), PRIMARYSTORAGENAME, shareusecache, creation/modification time, and inode, keeping /mnt/disk at the end
+    sort -t '|' -k12,12nr -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
     # Need to remove duplicate (cache and array)
     if grep -q "/mnt/disk" "$FILTERED_FILELIST"; then
         mvlogger "$(titleLine 'Optimizing Filtered Filelist' '-')"
@@ -1201,7 +1367,7 @@ createFilteredFilelist() {
                 previous_inode = 0
 
                 # Print new header
-                printf "PRIMARYSTORAGENAME|SECONDARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|PRIMARYSIZETHRESH|FILESIZE|SPARSENESS|NBLINKS|INODE|FILEPATH\n"
+                printf "PRIMARYSTORAGENAME|SECONDARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|PRIMARYSIZETHRESH|FILESIZE|SPARSENESS|NBLINKS|INODE|FILEPATH|HASPRIORITY\n"
             }
 
             NR > 1 { # Main loop, skip header line
@@ -1213,11 +1379,11 @@ createFilteredFilelist() {
                 # Handle duplicates
                 key = $3 "|" $5 "|" $7 "|" file_path
                 if (! is_duplicate(key)) {
-                    printf "%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+                    printf "%s|%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%d\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
                 }
             }' >"$FILTERED_FILELIST"
         mvlogger "Sorting"
-        sort -t '|' -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
+        sort -t '|' -k12,12nr -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
         rm "$tempfile1" "$tempfile2"
     fi
 }
@@ -1255,9 +1421,9 @@ decideMoveActions() {
 
     ## Proceed with files
     # Fields: $1:PRIMARYSTORAGENAME $2:SECONDARYSTORAGENAME $3:SHARENAME $4:SHAREUSECACHE $5:MODIFICATIONTIME
-    # $6:PRIMARYSIZETHRESH $7:FILESIZE $8:SPARSENESS $9:NBLINKS $10:INODE $11:FILEPATH
+    # $6:PRIMARYSIZETHRESH $7:FILESIZE $8:SPARSENESS $9:NBLINKS $10:INODE $11:FILEPATH $12:HASPRIORITY
 
-    awk -F"|" -v AGE="$AGE" -v STATS_FILE="$STATS_FILE" -v LASTCACHESYNC="$LASTCACHESYNC" -v SOFTSTOPFILE="$SOFTSTOPFILE" -v SYNCHRONIZECACHE="$SYNCHRONIZECACHE" -v REBALANCESHARES="$REBALANCESHARES" -v RESYNCHRONIZECACHE="$RESYNCHRONIZECACHE" '
+    awk -F"|" -v AGE="$AGE" -v STATS_FILE="$STATS_FILE" -v LASTCACHESYNC="$LASTCACHESYNC" -v SOFTSTOPFILE="$SOFTSTOPFILE" -v SYNCHRONIZECACHE="$SYNCHRONIZECACHE" -v REBALANCESHARES="$REBALANCESHARES" -v RESYNCHRONIZECACHE="$RESYNCHRONIZECACHE" -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" '
         BEGIN {
             FS = OFS = "|"
 
@@ -1269,6 +1435,71 @@ decideMoveActions() {
 
             # Print new header
             printf "PRIMARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFICATIONTIME|FILESIZE|POOLSUM|THRESHOLD|NBLINKS|INODE|ACTION|FROM|TO|FILEPATH\n"
+        }
+
+        # Function to get priority destination for a file path
+        function getPriorityDestination(file_path, file_size, default_dest) {
+            if (PRIORITY_MAPPINGS == "") {
+                return default_dest
+            }
+            
+            # Split priority mappings by newline
+            n = split(PRIORITY_MAPPINGS, mappings, "\n")
+            
+            for (i = 1; i <= n; i++) {
+                mapping = mappings[i]
+                if (mapping == "") continue
+                
+                # Look for the arrow separator
+                arrow_pos = index(mapping, "->")
+                if (arrow_pos > 0) {
+                    source_path = substr(mapping, 1, arrow_pos - 1)
+                    disk_list = substr(mapping, arrow_pos + 2)
+                    
+                    # Remove leading/trailing spaces
+                    gsub(/^ +| +$/, "", source_path)
+                    gsub(/^ +| +$/, "", disk_list)
+                    
+                    # Check if file path starts with the source path
+                    if (index(file_path, source_path) == 1) {
+                        # Split disk list by comma and return first disk
+                        # Space checking is handled by bash getPriorityDestination or Unraid mover
+                        n_disks = split(disk_list, disks, ",")
+                        if (n_disks > 0) {
+                            # Return the first disk from the priority list
+                            first_disk = disks[1]
+                            gsub(/^ +| +$/, "", first_disk)
+                            return "/mnt/" first_disk
+                        }
+                    }
+                }
+            }
+            
+            return default_dest
+        }
+        
+        # Function to check if a file has priority mapping
+        function hasPriorityMapping(file_path) {
+            if (PRIORITY_MAPPINGS == "") {
+                return 0
+            }
+            
+            n = split(PRIORITY_MAPPINGS, mappings, "\n")
+            for (i = 1; i <= n; i++) {
+                mapping = mappings[i]
+                if (mapping == "") continue
+                
+                arrow_pos = index(mapping, "->")
+                if (arrow_pos > 0) {
+                    source_path = substr(mapping, 1, arrow_pos - 1)
+                    gsub(/^ +| +$/, "", source_path)
+                    
+                    if (index(file_path, source_path) == 1) {
+                        return 1
+                    }
+                }
+            }
+            return 0
         }
 
         NR > 1 { # Main loop, skip header line
@@ -1311,7 +1542,7 @@ decideMoveActions() {
                     source = storage_path
                     if (SYNCHRONIZECACHE == "yes" && ($4 != "only" && $4 != "skipped" && $4 != "prefer") && ($5 >= LASTCACHESYNC || RESYNCHRONIZECACHE == "yes"))  {
                         action = "sync from primary"
-                        destination = "/mnt/" $2
+                        destination = getPriorityDestination($11, $7, "/mnt/" $2)
                         pool_stats[$1]["files_from_primary"] += 1
                         pool_stats[$1]["total_size_from_primary"] += $7
                     } else {
@@ -1322,7 +1553,7 @@ decideMoveActions() {
                 # Update pool statistics and set destination if moving the file
                 if (action == "move from primary") {
                     source = storage_path
-                    destination = "/mnt/" $2
+                    destination = getPriorityDestination($11, $7, "/mnt/" $2)
                     pool_stats[$1]["files_from_primary"] += 1
                     pool_stats[$1]["total_size_from_primary"] += $7
                 }
@@ -1358,7 +1589,7 @@ decideMoveActions() {
                             printf "%s|%s|%s|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s\n", $1, $3, $4, $5, $7, pool_sums[$1], $6, $9, $10, action, source, destination, file_path
                             action="sync unattended to secondary"
                             source = "/mnt/" $1
-                            destination = "/mnt/" $2
+                            destination = getPriorityDestination($11, $7, "/mnt/" $2)
                         } else {
                             if (action == "move unattended to primary") {
                                 source = storage_path
@@ -1366,7 +1597,7 @@ decideMoveActions() {
                             } else {
                                 action = "move unattended to secondary"
                                 source = storage_path
-                                destination = "/mnt/" $2
+                                destination = getPriorityDestination($11, $7, "/mnt/" $2)
                             }
                         }
                         pool_stats[$1]["files_from_unattended"] += 1
@@ -1476,6 +1707,11 @@ processTheMoves() {
     fi
 
     mvlogger "$(titleLine 'LET THE MOVING SHOW BEGIN !' '*')"
+    
+    # Initialize pending disk usage tracking for cumulative space calculations
+    declare -A PENDING_DISK_USAGE
+    mvlogger "Initialized cumulative space tracking for priority disk mappings"
+    
     if [ "$ENABLETURBO" = "yes" ]; then
         mvlogger "Forcing turbo write on"
         [ "$TESTMODE" != "yes" ] && /usr/local/sbin/mdcmd set md_write_method 1
@@ -1575,19 +1811,41 @@ processTheMoves() {
             if [[ "$ACTION" =~ "move" && "$MOVE_FILES_TOOL" = "move" ]]; then
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would move using Unraid move utility"
+                    # In test mode, simulate successful update for space tracking
+                    updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
                 else
                     mvDebuglogger "Move cmd: move, Move file: $SOURCE/$FILEPATH, Dest: $DESTINATION/" "Move Action"
                     # Perform unraid binary move.
                     find "$SOURCE/$FILEPATH" | /usr/libexec/unraid/move "$DEBUGGING" >>"$MOVER_DEBUG_LOG" 2>&1
+                    move_exit_code=$?
+                    
+                    # Update pending disk usage based on move result
+                    if [ $move_exit_code -eq 0 ]; then
+                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
+                    else
+                        mvlogger "Unraid move failed for $FILEPATH (exit code: $move_exit_code)"
+                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
+                    fi
                 fi
             else
                 # If action is sync/move and move files tool is rsync
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would $rsync_action using rsync utility"
+                    # In test mode, simulate successful update for space tracking
+                    updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
                 else
                     mvDebuglogger "Rsync cmd: $RSYNC_CMD, $rsync_action file: $SYNCED_FILES, Dest: $DESTINATION/" "$rsync_action Action"
                     # Perform rsync. relative paths and hardlinks
                     eval "$RSYNC_CMD" "$SYNCED_FILES" "$DESTINATION/"
+                    rsync_exit_code=$?
+                    
+                    # Update pending disk usage based on rsync result
+                    if [ $rsync_exit_code -eq 0 ]; then
+                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
+                    else
+                        mvlogger "Rsync failed for $FILEPATH (exit code: $rsync_exit_code)"
+                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
+                    fi
                 fi
             fi
 
