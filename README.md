@@ -32,6 +32,13 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.10.03
+    - new: Configurable blocked-filename characters with sensible defaults, persisted across runs. **_(masterwishx)_**
+    - new: Input and placeholders for invalid-character list and several path/script fields for clearer configuration.
+    - new: More accurate path-traversal and filename validation to better block unsafe paths.
+    - new: Improved filename and path validation to better detect and block unsafe names and traversal patterns.
+    - fix: Per-share sync override awareness for share-specific behavior.
+
 - 2025.09.06
     - new: Implemented disk priority mapping, allowing the user to choose the preferred disk to which the files will move to based on their path **_(Kamdzy)_**
     - new: Implemented an ignore list feature to exclude specific files or directories from being moved to array
