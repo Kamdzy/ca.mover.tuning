@@ -4,6 +4,9 @@
 
 This is a simple [Unraid](https://unraid.net/) plugin that will let you fine-tune the operation of the [mover](https://docs.unraid.net/unraid-os/manual/additional-settings/#mover).
 
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/6f52a17f3cc6448c99787e6f94fafa65)](https://app.codacy.com/gh/masterwishx/ca.mover.tuning/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![CodeFactor](https://www.codefactor.io/repository/github/masterwishx/ca.mover.tuning/badge)](https://www.codefactor.io/repository/github/masterwishx/ca.mover.tuning)
+
 - On scheduled runs of mover    
     - Only actually move file(s) if the cache drive is getting full (selectable thresholds) or/and based on files age,size,etc.
     - Optionally don't move if a parity check / rebuild is already in-progress.
@@ -32,6 +35,19 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2025.11.23
+    - new: Added support for moving empty folders from primary storage when the mover runs. *(masterwishx)*
+    - new: Added automatic disk-emptying using code from the stock Unraid mover after custom mover operations.
+    - new: Added event-aware Discord notifications for releases, PRs, issues, workflow runs, and manual triggers.
+    - new: Added per-share ATIME option.
+    - new: Added folder-aware tracking and explicit file vs. folder markers in status, statistics, and action output.
+    - new: Added FILETYPE column to the file list to distinguish folders from files.
+    - new: Added error handling for CRLF to LF line-ending conversion when processing the ignore list.
+    - new: Added external status badges to the README.
+    - fix: Improved warning styling, safer path handling, and updated example file-path text.
+    - fix: Debug run now captures stderr and uses an increased timeout.
+    - fix: General bug fixes and minor improvements.
+
 - 2025.10.31
     - fix: Added guard to skip cache:prefer pools when no valid secondary paths exist to avoid erroneous processing. **_(masterwishx)_**
     - new: Improved handling of secondary storage in cache-prefer mode for accurate counts, presence checks, path selection and clearer error/log messages.
