@@ -113,16 +113,8 @@ function startMover()
         }
     }
 
-    // Check if Move Now button follows plug-in filters
-    if ($cfg['movenow'] == "yes") {
-        $mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
-    } else {
-        if (version_compare($vars['version'], '7.2.1', '<')) {
-            $mover_str = "/usr/local/sbin/mover.old";
-        } else {
-            $mover_str = "/usr/local/sbin/mover";
-        }
-    }
+    // Always use age_mover since we override the mover command for all versions
+    $mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
 
     if ($options == "stop") {
         $niceLevel = $cfg['moverNice'] ?: "0";

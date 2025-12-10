@@ -55,9 +55,8 @@ function make_tune_cron()
 // Cron for forced move (unraid mover)
 function make_cron()
 {
-	global $vars;
-	$version = $vars['version'] ?? '0.0.0';
-	$mover = version_compare($version, '7.2.1', '<') ? '/usr/local/sbin/mover.old' : '/usr/local/sbin/mover';
+	// Always use mover.old since our wrapper is installed as mover for all versions
+	$mover = '/usr/local/sbin/mover.old';
 	$cron = isset($_POST['cron']) ? trim($_POST['cron']) : '';
 	if (empty($cron)) {
 		logger("Error: No cron schedule provided for forced move.");
