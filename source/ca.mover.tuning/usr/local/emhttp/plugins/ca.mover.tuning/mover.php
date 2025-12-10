@@ -28,6 +28,8 @@ function startMover()
 {
     global $vars, $cfg, $cron, $bash, $argv, $args;
 
+    logger("Starting Mover Tuning ...");
+
     if ($argv[2]) {
         $args[] = trim($argv[2]);
     }
@@ -54,12 +56,21 @@ function startMover()
             if ($cfg['debuglogging'] == 'yes') {
                 logger("Option 1: $option1\n");
             }
-        // Fix for Unraid v6.x that emhttp run mover without "start" parametr
+            // Fix for Unraid v6.x that emhttp run mover without "start" parameter
         } else if (version_compare($vars['version'], '7.0.0', '<')) {
             $args[0] = 'start';
             $option1 = $args[0];
             if ($cfg['debuglogging'] == 'yes') {
                 logger("Option 1 set to 'start' due to version < 7.0.0\n");
+            }
+            // For Unraid v7.2.1+, use $_POST for pressed move now button in plugin page
+        } else if (version_compare($vars['version'], '7.2.1', '>=')) {
+            if (isset($_POST['cmdStartTuneMover'])) {
+                $args[0] = 'start';
+                $option1 = $args[0];
+                if ($cfg['debuglogging'] == 'yes') {
+                    logger("Option 1 set to 'start' due to version >= 7.2.1\n");
+                }
             }
         }
 
@@ -106,7 +117,11 @@ function startMover()
     if ($cfg['movenow'] == "yes") {
         $mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
     } else {
-        $mover_str = "/usr/local/sbin/mover.old";
+        if (version_compare($vars['version'], '7.2.1', '<')) {
+            $mover_str = "/usr/local/sbin/mover.old";
+        } else {
+            $mover_str = "/usr/local/sbin/mover";
+        }
     }
 
     if ($options == "stop") {
@@ -147,13 +162,13 @@ function startMover()
         //Default "move now" button has been hit.
         $niceLevel = $cfg['moverNice'] ?: "0";
         $ioLevel = $cfg['moverIO'] ?: "-c 2 -n 0";
-        logger("ionice $ioLevel nice -n $niceLevel /usr/local/sbin/mover.old $options");
-        passthru("ionice $ioLevel nice -n $niceLevel /usr/local/sbin/mover.old $options");
+        logger("ionice $ioLevel nice -n $niceLevel $mover_str $options");
+        passthru("ionice $ioLevel nice -n $niceLevel $mover_str $options");
     }
 }
 
 if ($cron && $cfg['moverDisabled'] == 'yes') {
-    logger("Mover schedule disabled");
+    logger("Mover Tuning schedule disabled");
     exit();
 }
 
@@ -161,8 +176,6 @@ if ($cfg['parity'] == 'no' && $vars['mdResyncPos']) {
     logger("Parity Check / rebuild in progress.  Not running mover");
     exit();
 }
-
-logger("Starting Mover ...");
 
 startMover();
 
