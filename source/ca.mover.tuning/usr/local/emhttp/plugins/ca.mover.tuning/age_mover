@@ -848,7 +848,7 @@ getMoverSettings() {
         mvlogger "Move files tool: $MOVE_FILES_TOOL"
     fi
 
-    if [ -z $(cfg priorityMappings) ]; then
+    if [ -z "$(cfg priorityMappings)" ]; then
         if [[ ! "$config_file" =~ shareOverrideConfig ]]; then
             PRIORITY_MAPPINGS=""
         fi
