@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2025.12.10">
-<!ENTITY md5       "df27e257cc1d9ffd5aeaf00237dde04e">
+<!ENTITY version   "2025.12.13">
+<!ENTITY md5       "7507ed2d5eade6739bcb9909de7cc0ba">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -648,6 +648,10 @@ fi
 
 # Refresh cron
 /usr/local/sbin/update_cron
+
+# Set full permissions on plugin directory and mover
+chmod -R 777 /usr/local/emhttp/plugins/&name;/
+chmod -R 777 /usr/local/sbin/mover
 
 echo ""
 echo "----------------------------------------------------"
