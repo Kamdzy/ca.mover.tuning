@@ -573,6 +573,50 @@ if version_ge "$UNRAID_VERSION" "7.2.1"; then
     fi
 fi
 
+# Backup and replace mover script for ALL Unraid versions
+echo "Installing mover wrapper script"
+
+# Determine which mover location exists
+if [[ -e /usr/local/sbin/mover ]]; then
+  MOVER_PATH="/usr/local/sbin/mover"
+  MOVER_BACKUP="/usr/local/sbin/mover.old"
+elif [[ -e /usr/local/bin/mover ]]; then
+  MOVER_PATH="/usr/local/bin/mover"
+  MOVER_BACKUP="/usr/local/bin/mover.old"
+else
+  echo "ERROR: No mover binary found"
+  exit 1
+fi
+
+# Check if current mover is our wrapper
+PLUGIN_MOVER="/usr/local/emhttp/plugins/&name;/mover"
+if [[ -f "$MOVER_PATH" ]]; then
+  if cmp -s "$MOVER_PATH" "$PLUGIN_MOVER"; then
+    echo "Plugin wrapper already installed"
+  else
+    # Current mover is different (either original or updated Unraid mover)
+    if [[ -f "$MOVER_BACKUP" ]]; then
+      # Check if backup is also different from current
+      if ! cmp -s "$MOVER_PATH" "$MOVER_BACKUP"; then
+        echo "Detected updated mover - updating backup"
+        mv -f "$MOVER_PATH" "$MOVER_BACKUP"
+      else
+        echo "Backup is current - removing old wrapper"
+        rm -f "$MOVER_PATH"
+      fi
+    else
+      echo "Backing up original mover"
+      mv "$MOVER_PATH" "$MOVER_BACKUP"
+    fi
+  fi
+fi
+
+echo "Installing tuned mover script"
+cp "$PLUGIN_MOVER" "$MOVER_PATH"
+
+echo "Fixing permissions for mover"
+chmod +x "$MOVER_PATH"
+
 # Clean leftover run-state files only if age_mover is NOT running
 if ! pgrep -f "age_mover" >/dev/null 2>&amp;1; then
   echo "Cleaning leftover lock/stop files..."
