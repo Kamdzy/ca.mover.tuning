@@ -8,10 +8,10 @@ $cron = $argv[1] == "crond";
 $bash = $argv[1] == "bash";
 $args = [];
 
-#Check to see if $cfg has relevant fields in it, "ca.mover.tuning.cfg" may not have existed
-if (!isset($cfg['moverDisabled'])) {   #moverDisabled should always have a value of yes or no
-    logger("ca.mover.tuning.cfg either does not exist or does not have relevant fields. Please check before running mover.");
-    exit();
+// Read-only status check (no state change, no CSRF risk)
+if (!empty($_GET['check'])) {
+    echo file_exists('/var/run/mover.pid') ? "1" : "0";
+    exit;
 }
 
 function logger($string)
