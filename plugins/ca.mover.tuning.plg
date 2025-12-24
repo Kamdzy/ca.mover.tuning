@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2025.12.13">
-<!ENTITY md5       "7507ed2d5eade6739bcb9909de7cc0ba">
+<!ENTITY version   "2025.12.24">
+<!ENTITY md5       "ad7f79e20b7da736cc61f92dd814dcc7">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,14 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2025.12.21
+- fix: Refactored mover workflow and file list logic for cleaner code. *(masterwishx)*
+- fix: Fixed variable expansion issue in file list checking to prevent word-splitting/empty-string errors. (Thanks to RyanWarwick)
+- fix: Enhanced mover scheduling workflow with updated binary path references.
+- fix: Improved symlink creation logic and plugin messaging for better consistency.
+- fix: Migration added to update existing scheduled tasks to use the mover start command with migration logging.
+- new: UI updated with version-aware guidance, duplicated CLI help panels, and responsive styling.
+
 ###2025.12.13
 - fix: Fixed Firefox button responsiveness issue where clicking did not trigger the mover. *(masterwishx)*
 - new: New mover control UI with Start button, spinner, status text, and wrench indicator that reflects running state; disables while running and re-enables on errors.
@@ -566,7 +574,7 @@ if version_ge "$UNRAID_VERSION" "7.2.1"; then
             echo "Creating Mover Tuning cron file: $TUNING_CRON_FILE"
             {
                 echo "# Generated schedule for Mover Tuning move:"
-                echo "$SHARE_MOV_SCHED /usr/local/emhttp/plugins/&name;/age_mover start |&amp; logger -t move"
+                echo "$SHARE_MOV_SCHED /usr/local/emhttp/plugins/&name;/mover start |&amp; logger -t move"
             } > "$TUNING_CRON_FILE"
 
         else
@@ -576,6 +584,12 @@ if version_ge "$UNRAID_VERSION" "7.2.1"; then
         # Rename old dynamix cron file
         echo "Renaming old schedule: mover.cron → mover.cron.old"
         mv "$DYNAMIX_CRON_FILE" "$DYNAMIX_CRON_OLD"
+    fi
+
+    # Fix old cron entries using age_mover → mover
+    if [[ -f "$TUNING_CRON_FILE" ]] &amp;&amp; grep -q '/age_mover start' "$TUNING_CRON_FILE"; then
+        sed -i 's|/age_mover start|/mover start|' "$TUNING_CRON_FILE"
+        echo "Migrated cron entry: age_mover → mover"
     fi
 fi
 
@@ -646,10 +660,10 @@ chmod +x /usr/local/emhttp/plugins/&name;/mover
 chmod +x /usr/local/emhttp/plugins/&name;/share_mover
 chmod +x /usr/local/emhttp/plugins/&name;/debug_mover
 
-# Install symlink for age_mover
-if [[ -x /usr/local/emhttp/plugins/&name;/age_mover ]]; then
-  ln -sf /usr/local/emhttp/plugins/&name;/age_mover /usr/local/sbin/age_mover
-  echo "Linked age_mover → /usr/local/sbin/age_mover"
+# Install symlink: /usr/local/sbin/age_mover → plugin mover
+if [[ -x /usr/local/emhttp/plugins/&name;/mover ]]; then
+  ln -sf /usr/local/emhttp/plugins/&name;/mover /usr/local/sbin/age_mover
+  echo "Created symlink: /usr/local/sbin/age_mover → plugin mover (for backward compatibility)"
 fi
 
 # Refresh cron
