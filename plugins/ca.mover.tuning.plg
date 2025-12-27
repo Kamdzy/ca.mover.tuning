@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2025.12.24">
-<!ENTITY md5       "ad7f79e20b7da736cc61f92dd814dcc7">
+<!ENTITY version   "2025.12.27">
+<!ENTITY md5       "c3aec91f9fb6573c404cf41ad8b53c15">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,13 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2025.12.26
+- fix: Added mutual-exclusion between CTIME/ATIME and age-based controls with automatic initialization. *(masterwishx)*
+- new: Collapsible CLI help panel with toggle to reveal/hide command details.
+- new: Added dismissible New Year notice and dynamic plugin year rendering across the UI.
+- new: Expanded inline help for logging, debug, top-folder, and related options.
+- fix: Wording, spacing, and layout refinements for improved clarity.
+
 ###2025.12.21
 - fix: Refactored mover workflow and file list logic for cleaner code. *(masterwishx)*
 - fix: Fixed variable expansion issue in file list checking to prevent word-splitting/empty-string errors. (Thanks to RyanWarwick)
