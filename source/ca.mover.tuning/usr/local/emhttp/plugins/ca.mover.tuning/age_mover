@@ -1533,7 +1533,7 @@ createFilteredFilelist() {
         FINDSTR="$FINDSTR if (!shouldIgnoreFile(\$6)) { printf \"%s|%s|%s|%s|%d|%d|%d|%g|%d|%d|%s|%s|%d\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, \$2, \$3, \$4, \$5, \$6, \$7, hasPriorityMapping(\$6) } }'"
 
         # Exclude Downloads/incomplete folder
-        FINDSTR+=" | grep -iv 'Downloads/incomplete'"
+        # FINDSTR+=" | grep -iv 'Downloads/incomplete'"
 
         # Exclude Downloads/wanted folder
         FINDSTR+=" | grep -iv 'Downloads/wanted'"
