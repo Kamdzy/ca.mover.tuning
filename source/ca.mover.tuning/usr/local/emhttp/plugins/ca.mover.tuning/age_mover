@@ -2652,7 +2652,10 @@ start() {
     # Do not start if already running
     if [ -f $PIDFILE ]; then
         if ps h $(cat $PIDFILE) | grep -q mover; then
-            echo "mover: already running"
+            # mvlogger, not echo: this is the normal failure mode when a run
+            # overruns its schedule, and it must reach the mover log and the
+            # Unraid GUI, not just stdout.
+            mvlogger "mover: already running" "warning"
             exit 1
         fi
     fi
@@ -2687,6 +2690,7 @@ start() {
     #mvlogger "$(titleLine echo "Mover Tuning Plugin version $(grep -oP 'version=\K[^"]+' "$MOVERTUNINGCFGFILE")" '*')"
     mvlogger "$(titleLine "Mover Tuning Plugin version $(grep "^version=" "$MOVERTUNINGCFGFILE" | cut -d '"' -f 2)" '*')"
     mvlogger "Run by: $RUN_METHOD"
+    mvlogger "Log Level: $LOGLEVEL"
 
     # Convert flags to readable text
     UNRAID_MOVER_ENABLED=$([ "$UNRAID_MOVER" = 1 ] && echo "yes" || echo "no")
