@@ -50,7 +50,9 @@ function runMover($cmd)
     logger("Detached from web request; mover output continues in syslog and the mover log");
     // stdout is discarded rather than piped to logger: on this path age_mover's
     // mvlogger already writes each message to syslog, so piping would double it.
-    exec($cmd . " >/dev/null 2>&1 &");
+    // MOVER_RUN_METHOD is passed explicitly because detaching reparents the
+    // process, so age_mover's ancestor walk can no longer see php-fpm.
+    exec("MOVER_RUN_METHOD='web button' " . $cmd . " >/dev/null 2>&1 &");
 
     // Wait for the run to claim the pid file so the page's status poll does
     // not race a mover that has not started yet.
