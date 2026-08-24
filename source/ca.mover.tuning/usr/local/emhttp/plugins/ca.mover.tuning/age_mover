@@ -1733,28 +1733,6 @@ decideMoveActions() {
             return 0
         }
 
-        # Function to check if a file should be ignored
-        function shouldIgnoreFile(file_path) {
-            if (IGNORE_LIST == "") {
-                return 0
-            }
-            
-            n = split(IGNORE_LIST, ignore_paths, ":::")
-            for (i = 1; i <= n; i++) {
-                ignore_path = ignore_paths[i]
-                if (ignore_path == "") continue
-                
-                # Remove leading and trailing whitespace
-                gsub(/^ +| +$/, "", ignore_path)
-                
-                # Check if file path starts with ignore path
-                if (index(file_path, ignore_path) == 1) {
-                    return 1
-                }
-            }
-            return 0
-        }
-
         BEGIN {
             FS = OFS = "|"
 
