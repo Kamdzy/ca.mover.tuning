@@ -362,124 +362,6 @@ mvDebuglogger() {
     fi
 }
 
-# Global associative array to track pending space usage per disk (in bytes)
-# This prevents over-allocation when multiple files are queued for the same disk
-declare -A PENDING_DISK_USAGE
-
-# Function to get preferred destination disk based on priority mappings
-# $1 is the file path
-# $2 is the file size in bytes
-# $3 is the default destination (e.g., "/mnt/user0")
-# Returns the preferred destination disk or the default if no mapping found
-getPriorityDestination() {
-    local file_path="$1"
-    local file_size="$2"
-    local default_dest="$3"
-    
-    # If no priority mappings configured, return default
-    if [ -z "$PRIORITY_MAPPINGS" ]; then
-        echo "$default_dest"
-        return
-    fi
-    
-    # Convert ::: delimited string to newline delimited for processing
-    local mappings_converted
-    mappings_converted=$(echo "$PRIORITY_MAPPINGS" | sed 's/:::/\n/g')
-    
-    # Parse priority mappings and check for matches
-    while IFS= read -r mapping_line; do
-        # Skip empty lines
-        [ -z "$mapping_line" ] && continue
-        
-        # Parse mapping format: "/path/to/source -> disk1,disk2,disk3"
-        if [[ "$mapping_line" =~ ^([^-]+)-\>(.+)$ ]]; then
-            local source_path=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  # Remove only leading/trailing spaces
-            local disk_list=$(echo "${BASH_REMATCH[2]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')    # Remove only leading/trailing spaces
-            
-            # Check if file path starts with the source path
-            if [[ "$file_path" == "$source_path"* ]]; then
-                mvlogger "Priority mapping match found for '$file_path' -> disks: $disk_list"
-                
-                # Split disk list by comma and try each disk
-                IFS=',' read -ra DISKS <<< "$disk_list"
-                for disk_name in "${DISKS[@]}"; do
-                    disk="/mnt/$disk_name"
-                    
-                    # Check if disk exists and is mounted
-                    if [ -d "$disk" ] && mountpoint -q "$disk"; then
-                        # Get current available space in bytes
-                        local available_space=$(df --output=avail "$disk" 2>/dev/null | tail -n 1)
-                        if [ -n "$available_space" ] && [ "$available_space" -gt 0 ]; then
-                            available_space=$((available_space * 1024))  # Convert KB to bytes
-                            
-                            # Subtract pending moves to this disk from available space
-                            local pending_usage=${PENDING_DISK_USAGE["$disk"]:-0}
-                            local effective_available=$((available_space - pending_usage))
-                            
-                            # Add 10% buffer for safety and account for filesystem overhead
-                            # Minimum 100MB buffer for very large files
-                            local buffer=$((file_size / 10))
-                            if [ "$buffer" -lt 104857600 ]; then  # 100MB minimum buffer
-                                buffer=104857600
-                            fi
-                            local required_space=$((file_size + buffer))
-                            
-                            if [ "$effective_available" -gt "$required_space" ]; then
-                                mvlogger "Selected priority disk: $disk (file: $(($file_size / 1048576))MB, available: $(($available_space / 1048576))MB, pending: $(($pending_usage / 1048576))MB, effective: $(($effective_available / 1048576))MB)"
-                                
-                                # Track this allocation for future space calculations
-                                PENDING_DISK_USAGE["$disk"]=$((pending_usage + file_size))
-                                
-                                echo "$disk"
-                                return
-                            else
-                                mvlogger "Priority disk $disk has insufficient space (file: $(($file_size / 1048576))MB, available: $(($available_space / 1048576))MB, pending: $(($pending_usage / 1048576))MB, effective: $(($effective_available / 1048576))MB)"
-                            fi
-                        else
-                            mvlogger "Could not determine available space for priority disk $disk"
-                        fi
-                    else
-                        mvlogger "Priority disk $disk not found or not mounted"
-                    fi
-                done
-                
-                mvlogger "No priority disks available for '$file_path', using fallback: $default_dest"
-                break
-            fi
-        fi
-    done <<< "$mappings_converted"
-    
-    # Return default destination if no mapping found or no disks available
-    echo "$default_dest"
-}
-
-# Function to update pending disk usage after a file move completes
-# $1 is the destination disk path (e.g., "/mnt/disk3")
-# $2 is the file size in bytes
-# $3 is "success" or "failure" - whether the move succeeded
-updatePendingDiskUsage() {
-    local disk="$1"
-    local file_size="$2"
-    local status="$3"
-    
-    if [ -n "${PENDING_DISK_USAGE["$disk"]}" ]; then
-        if [ "$status" = "success" ]; then
-            # Move succeeded - the space is now actually used, remove from pending
-            PENDING_DISK_USAGE["$disk"]=$((${PENDING_DISK_USAGE["$disk"]} - file_size))
-            mvlogger "Updated pending usage for $disk: removed $(($file_size / 1048576))MB (move successful)"
-        elif [ "$status" = "failure" ]; then
-            # Move failed - space is still available, remove from pending
-            PENDING_DISK_USAGE["$disk"]=$((${PENDING_DISK_USAGE["$disk"]} - file_size))
-            mvlogger "Updated pending usage for $disk: removed $(($file_size / 1048576))MB (move failed, space still available)"
-        fi
-        
-        # Clean up if usage drops to zero or below
-        if [ "${PENDING_DISK_USAGE["$disk"]}" -le 0 ]; then
-            unset PENDING_DISK_USAGE["$disk"]
-        fi
-    fi
-}
-
 #Moved variable assignment into a function
 getMoverSettings() {
     #Use the config file instead of input variables (ease execution from command line)
@@ -2172,9 +2054,6 @@ processTheMoves() {
 
     mvlogger "$(titleLine 'LET THE MOVING SHOW BEGIN !' '*')"
     
-    # Initialize pending disk usage tracking for cumulative space calculations
-    declare -A PENDING_DISK_USAGE
-    mvlogger "Initialized cumulative space tracking for priority disk mappings"
     
     if [ "$ENABLETURBO" = "yes" ]; then
         mvlogger "Forcing turbo write on"
@@ -2305,28 +2184,20 @@ processTheMoves() {
             if [[ "$ACTION" =~ "move" && "$MOVE_FILES_TOOL" = "move" ]]; then
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would move using Unraid move utility"
-                    # In test mode, simulate successful update for space tracking
-                    updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
                 else
                     mvDebuglogger "Move cmd: move, Move $filetype: $SOURCE/$FILEPATH, Dest: $DESTINATION/" "Move Action"
                     # Perform unraid binary move.
                     find "$SOURCE/$FILEPATH" | /usr/libexec/unraid/move "$DEBUGGING" >>"$MOVER_DEBUG_LOG" 2>&1
                     move_exit_code=$?
-                    
-                    # Update pending disk usage based on move result
-                    if [ $move_exit_code -eq 0 ]; then
-                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
-                    else
+
+                    if [ $move_exit_code -ne 0 ]; then
                         mvlogger "Unraid move failed for $FILEPATH (exit code: $move_exit_code)"
-                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
                     fi
                 fi
             else
                 # If action is sync/move and move files tool is rsync
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would $rsync_action using rsync utility"
-                    # In test mode, simulate successful update for space tracking
-                    updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
                 else
                     mvDebuglogger "Rsync cmd: ${RSYNC_CMD[*]}, $rsync_action $filetype: $SYNCED_FILES, Dest: $DESTINATION/" "$rsync_action Action"
                     # Perform rsync. relative paths and hardlinks
@@ -2334,16 +2205,11 @@ processTheMoves() {
                         "${RSYNC_CMD[@]}" "${SYNCED_FILES_ARR[@]}" "$DESTINATION/"
                         rsync_exit_code=$?
 
-                        # Update pending disk usage based on rsync result
-                        if [ $rsync_exit_code -eq 0 ]; then
-                            updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
-                        else
+                        if [ $rsync_exit_code -ne 0 ]; then
                             mvlogger "Rsync failed for $FILEPATH (exit code: $rsync_exit_code)"
-                            updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
                         fi
                     else
                         mvlogger "Error: No files found to move for $FILEPATH" "failure"
-                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
                     fi
                 fi
             fi
