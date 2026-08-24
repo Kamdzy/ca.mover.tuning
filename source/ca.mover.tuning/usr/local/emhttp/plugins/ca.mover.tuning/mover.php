@@ -148,14 +148,20 @@ function startMover()
     // Hoisted above the guards below so the status branch can use it.
     $mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
 
-    // status is answered before the "already running" guard below, since the
-    // only time it is interesting is while a run is in progress.
+    // status and softstop are answered before the "already running" guard below:
+    // the only time either is interesting is while a run is in progress, which is
+    // exactly the state that guard exits on.
     if ($options == "status") {
         logger("ionice $ioLevel nice -n $niceLevel $mover_str status");
         passthru("ionice $ioLevel nice -n $niceLevel $mover_str status");
         exit();
     }
 
+    if ($options == "softstop") {
+        logger("ionice $ioLevel nice -n $niceLevel $mover_str softstop");
+        passthru("ionice $ioLevel nice -n $niceLevel $mover_str softstop");
+        exit();
+    }
 
     if ($options != "stop") {
         clearstatcache();
@@ -177,12 +183,6 @@ function startMover()
     if ($options == "stop") {
         logger("ionice $ioLevel nice -n $niceLevel $mover_str stop");
         passthru("ionice $ioLevel nice -n $niceLevel $mover_str stop");
-        exit();
-    }
-
-    if ($options == "softstop") {
-        logger("ionice $ioLevel nice -n $niceLevel $mover_str softstop");
-        passthru("ionice $ioLevel nice -n $niceLevel $mover_str softstop");
         exit();
     }
 
