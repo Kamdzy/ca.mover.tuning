@@ -1522,7 +1522,7 @@ createFilteredFilelist() {
                 else
                     mvlogger "Error calculating size for $skipped_path"
                 fi
-            done <<< $(grep "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" | grep -vFx -f <(sed 's/\/*$//' "${SKIPFILESLIST}")) # With grep -vFx -f <(sed 's/\/*$//' "$SKIPFILESLIST" -> remove trailing slash
+            done <<<"$(grep "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" "${SKIPFILESLIST}")" # trailing / and * are stripped in-loop above
             mvlogger "    Ignored files are using $(bytes_to_human $TOTAL_SKIPPED_PATH_RESERVED_SPACE)"
         fi
 
