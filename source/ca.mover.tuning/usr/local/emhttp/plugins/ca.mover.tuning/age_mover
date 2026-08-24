@@ -76,16 +76,6 @@ LAST_DIR=""
 LAST_COUNT=-1
 LAST_FOLDER_COUNT=-1
 EMPTY_DIR_COUNT=-1
-# Variables from unraid mover.old empty() function
-DEBUGGING=""
-CFGPATH="/boot/config/shares"
-move() {
-    find "$1" -depth 2>/dev/null | /usr/libexec/unraid/move $DEBUGGING
-    # second pass to clean up leftover empty directories
-    find "$1" -depth -type d 2>/dev/null | /usr/libexec/unraid/move $DEBUGGING
-}
-###
-
 # Get parent Logs Folder from config, if blank set to default /tmp
 CONFIGLOGFOLDER=$(grep "loggingFolder=" "$MOVERTUNINGCFGFILE" | cut -d '"' -f 2)
 
@@ -116,6 +106,58 @@ UNRAID_VERSION=$(grep '^version=' /etc/unraid-version | cut -d'"' -f2)
 # Safe version compare function
 version_ge() {
     [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+}
+
+# Variables from unraid mover.old empty() function
+DEBUGGING=""
+CFGPATH="/boot/config/shares"
+move() {
+    find "$1" -depth 2>/dev/null | /usr/libexec/unraid/move $DEBUGGING
+    # second pass to clean up leftover empty directories
+    find "$1" -depth -type d 2>/dev/null | /usr/libexec/unraid/move $DEBUGGING
+}
+
+# Detect execution method by finding the top-level root ancestor process
+# (crond = Cron, ttyd = CLI, php-fpm = Web Button)
+UPPER_PROC=""
+curr_pid=$$
+IS_CRON=0
+RUN_METHOD=""
+
+detect_run_method() {
+    while [[ "$curr_pid" =~ ^[0-9]+$ ]] && [ "$curr_pid" -gt 1 ]; do
+        if [ -r "/proc/$curr_pid/status" ]; then
+            unset comm ppid
+            while IFS=$'\t ' read -r key val; do
+                case "$key" in
+                Name:) comm=$val ;;
+                PPid:) ppid=$val ;;
+                esac
+            done <"/proc/$curr_pid/status"
+
+            # Save the process name as long as it isn't our own script ($$)
+            if [ "$curr_pid" -ne "$$" ]; then
+                UPPER_PROC="$comm"
+            fi
+
+            curr_pid=$ppid
+        else
+            break
+        fi
+    done
+
+    # Convert the top‑level parent process into a readable run method
+    # so logs can show: [cron], [cli], or [web button]
+
+    case "$UPPER_PROC" in
+    crond)
+        RUN_METHOD="cron"
+        IS_CRON=1
+        ;;
+    ttyd) RUN_METHOD="cli" ;;
+    php-fpm*) RUN_METHOD="web button" ;;
+    *) RUN_METHOD="unknown" ;;
+    esac
 }
 
 # This function is to send messages to Unraid gui etc.
@@ -223,34 +265,64 @@ validate_filename() {
 }
 
 # Function for verbose output and logging
+# $1 = message text
+# $2 = optional notify level
+#
+# Uses global $IS_CRON (set at script startup):
+#   IS_CRON=1 → script was launched by cron (echo only, no logger)
+#   IS_CRON=0 → CLI or GUI button (echo + logger)
+#
+# LOGLEVEL:
+#   1 → echo + log file
+#   2 → log file only
+#
 mvlogger() {
+    local msg="$1"
+    local notify="$2"
 
+    # Ensure log folder exists
     if [ ! -d "${LOGFOLDER}/ca.mover.tuning" ]; then
         [ "$LOGLEVEL" = 1 ] && echo "${LOGFOLDER}/ca.mover.tuning Directory does not exist. Creating it"
         mkdir -p "${LOGFOLDER}/ca.mover.tuning"
     fi
 
     if [ "$LOGLEVEL" = 1 ]; then
-        if [ -t 1 ]; then # running from terminal, echoing date
-            echo "$(date +"%T.%3N") $1"
-        else # running from cron
-            echo "$1"
+
+        if [ "$IS_CRON" = 1 ]; then
+            # CRON → echo only (goes to syslog automatically)
+            echo "$msg"
+        else
+            # CLI or BUTTON → echo + logger
+            echo "$(date +"%T.%3N") $msg"
+            logger -t move -- "$msg"
         fi
-        echo "$(date +"%T.%3N") $1" >>"$MOVER_LOG"
-    # If filesOnly store to log files only
+
+        # Always append to mover log
+        echo "$(date +"%T.%3N") $msg" >>"$MOVER_LOG"
+
     elif [ "$LOGLEVEL" = 2 ]; then
-        echo "$(date +"%T.%3N") $1" >>"$MOVER_LOG"
+        # Files-only mode
+        echo "$(date +"%T.%3N") $msg" >>"$MOVER_LOG"
     fi
 
-    # if $2 exist send notify message
-    if [ -n "$2" ]; then
-        unraid_notify "$1" "$2"
+    # Optional notification
+    if [ -n "$notify" ]; then
+        unraid_notify "$msg" "$notify"
     fi
 }
 
 # Function for verbose debug output and debug logging
-# $1 is the debug message to log
-# $2 is the name of debug message
+# $1 = debug message
+# $2 = debug tag
+#
+# Uses global $IS_CRON (set at script startup):
+#   IS_CRON=1 → cron run (echo only)
+#   IS_CRON=0 → CLI or GUI button (echo + logger)
+#
+# DEBUGLEVEL:
+#   1 → echo + debug log
+#   2 → debug log only
+#
 mvDebuglogger() {
     local msg="$1"
     local tag="$2"
@@ -260,32 +332,33 @@ mvDebuglogger() {
         mkdir -p "${LOGFOLDER}/ca.mover.tuning"
     fi
 
+    # Build formatted debug block
+    local block
+    block="$(
+        printf '%s\n%s\n%s\n' \
+            "$(titleLine "Debugging $tag" '-')" \
+            "$(date +"%T.%3N") $msg" \
+            "$(titleLine " " ' ')"
+    )"
+
     if [ "$DEBUGLEVEL" = 1 ]; then
-        # Terminal output
-        if [ -t 1 ]; then # interactive terminal ⇒ show timestamp
-            printf '%s\n' "$(titleLine "Debugging $tag" '-')"
-            printf '%s\n' "$(date +"%T.%3N") $msg"
-            printf '%s\n' "$(titleLine " " ' ')"
-        else # cron/non-interactive ⇒ plain echo
-            printf '%s\n' "$(titleLine "Debugging $tag" '-')"
-            printf '%s\n' "$msg"
-            printf '%s\n' "$(titleLine " " ' ')"
+
+        if [ "$IS_CRON" = 1 ]; then
+            # CRON → echo only
+            printf '%s\n' "$block"
+        else
+            # CLI or BUTTON → echo + logger
+            printf "%s\n" "$block"
+            printf "%s\n" "$block" | logger --tag move
+
         fi
 
-        # Log file output (always with timestamp)
-        {
-            printf '%s\n' "$(titleLine "Debugging $tag" '-')"
-            printf '%s\n' "$(date +"%T.%3N") $msg"
-            printf '%s\n' "$(titleLine " " ' ')"
-        } >>"$MOVER_DEBUG_LOG"
-    # If filesOnly store to log files only
+        # Always append to debug log
+        printf '%s\n' "$block" >>"$MOVER_DEBUG_LOG"
+
     elif [ "$DEBUGLEVEL" = 2 ]; then
-        # Log file output (always with timestamp)
-        {
-            printf '%s\n' "$(titleLine "Debugging $tag" '-')"
-            printf '%s\n' "$(date +"%T.%3N") $msg"
-            printf '%s\n' "$(titleLine " " ' ')"
-        } >>"$MOVER_DEBUG_LOG"
+        # Files-only mode
+        printf '%s\n' "$block" >>"$MOVER_DEBUG_LOG"
     fi
 }
 
@@ -923,6 +996,18 @@ getMoverSettings() {
         MOVE_EMPTY_FOLDERS=$(cfg moveEmptyFolders)
         mvlogger "Move empty folders: $MOVE_EMPTY_FOLDERS"
     fi
+
+    # Share size calculation
+    if [ -z "$(cfg shareCalculation)" ]; then
+        if [[ ! "$config_file" =~ shareOverrideConfig ]]; then
+            mvlogger "No Share size calculation argument provided, defaulting to yes"
+            SHARE_CALCULATION="yes"
+            echo 'shareCalculation="yes"' >>"$config_file"
+        fi
+    else
+        SHARE_CALCULATION=$(cfg shareCalculation)
+        mvlogger "Share size calculation: $SHARE_CALCULATION"
+    fi
 }
 
 resetRunOnceMoverSettings() {
@@ -1065,6 +1150,7 @@ createFilteredFilelist() {
         if [ ! -d "/mnt/$PRIMARYSTORAGENAME" ]; then
             # Do not process this pool if path does not exist
             mvlogger "/mnt/$PRIMARYSTORAGENAME does not exist. Is the pool still used? Consider removing $SHARECFG if not."
+            mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
             mvlogger "=> Skipping"
             continue # Move to the next iteration of the loop
         fi
@@ -1140,10 +1226,12 @@ createFilteredFilelist() {
             if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
                 # Do not process this pool if path does not exist
                 mvlogger "$SHAREPATH does not exist. Is the ZFS dataset not created yet? Copy files to '/mnt/user/$SHARENAME' first."
+                mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
                 mvlogger "=> Skipping"
             else
                 # Do not process this pool if path does not exist
                 mvlogger "$SHAREPATH does not exist. Is the share still used? Consider removing $SHARECFG if not."
+                mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
                 mvlogger "=> Skipping"
             fi
             continue # Move to the next iteration of the loop
@@ -1254,20 +1342,29 @@ createFilteredFilelist() {
                 if [ "$ONLY_ONE_SHARE" -eq 1 ]; then
                     mvlogger "Mover action: no action, only $PRIMARYSTORAGENAME used (cache:only)."
                     mvlogger "Only one share found in cache pool. Skipping cache pool size calculation."
+                    CACHESHARERESERVEDSPACE=0
                 else
                     mvlogger "Mover action: no action, only $PRIMARYSTORAGENAME used (cache:only)."
                     mvlogger "=> Nothing will be moved. Share usage is taken into account in the calculation of the threshold for other shares."
-                    if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
-                        mvlogger "Calculating zfs share usage..."
-                        # if error on command then share can be a folder instead dataset
-                        if ! CACHESHARERESERVEDSPACE=$(zfs list -Hpo used "$PRIMARYSTORAGENAME/$SHARENAME"); then
-                            mvlogger "Warning: Share is currently a folder. Convert it to a dataset for better performance."
+
+                    # Share size calculation (only if enabled)
+                    if [ "$SHARE_CALCULATION" = "yes" ]; then
+                        # Try ZFS dataset first
+                        if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
+                            mvlogger "Calculating zfs share usage..."
+                            # if error on command then share can be a folder instead dataset
+                            if ! CACHESHARERESERVEDSPACE=$(zfs list -Hpo used "$PRIMARYSTORAGENAME/$SHARENAME"); then
+                                mvlogger "Warning: Share is currently a folder. Convert it to a dataset for better performance."
+                                mvlogger "Calculating share usage... (can take a moment)"
+                                CACHESHARERESERVEDSPACE=$(du -sh "$SHAREPATH" | awk '{print $1}' | human_to_bytes)
+                            fi
+                        else
                             mvlogger "Calculating share usage... (can take a moment)"
                             CACHESHARERESERVEDSPACE=$(du -sh "$SHAREPATH" | awk '{print $1}' | human_to_bytes)
                         fi
                     else
-                        mvlogger "Calculating share usage... (can take a moment)"
-                        CACHESHARERESERVEDSPACE=$(du -sh "$SHAREPATH" | awk '{print $1}' | human_to_bytes)
+                        mvlogger "Share size calculation disabled for this share."
+                        CACHESHARERESERVEDSPACE=0
                     fi
                 fi
                 echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|only|9999999999|$PRIMARYSIZETHRESH|$CACHESHARERESERVEDSPACE|0|0|0|${SHAREPATH}|d|0" >>"$FILTERED_FILELIST"
@@ -1563,7 +1660,6 @@ createFilteredFilelist() {
 
         if [ -d "$SHAREPATH" ] || [[ "$SHAREUSECACHE" = "prefer" && "$COUNT_SECONDARY_FILES" -gt 0 ]] || [ "$REBALANCESHARES" = "yes" ]; then
             [ "$CTIME" == "yes" ] && mvlogger "Filtering $SHARENAME files... (can take a moment)"
-            mvlogger "FINDSTR is: ${FINDSTR}"
             eval "${FINDSTR}>>${FILTERED_FILELIST}"
             mvlogger "Updated Filtered filelist: $FILTERED_FILELIST for $SHARENAME"
         fi
@@ -2143,11 +2239,11 @@ processTheMoves() {
                 fi
             fi
 
-            #Prepare RSYNC_CMD
-            RSYNC_CMD="rsync --archive --xattrs --relative --hard-links"
+            #Prepare RSYNC_CMD as an array so it is never re-parsed by the shell
+            RSYNC_CMD=(rsync --archive --xattrs --relative --hard-links)
 
             if [ "$TESTMODE" = "yes" ]; then
-                RSYNC_CMD+=" --dry-run"
+                RSYNC_CMD+=(--dry-run)
             fi
 
             # print to debug $SYNCED_FILES $FILEPATH
@@ -2164,12 +2260,19 @@ processTheMoves() {
                 fi
             fi
 
-            # Get files to rsync:
-            SYNCED_FILES=$(grep "|$NBLINKS|$INODE|" "$MOVER_ACTIONLIST" | grep "|$MODIFICATIONTIME|" | grep "ary|$SOURCE|" | cut -d'|' -f13 | while read line; do echo "\"$SOURCE/./$line\""; done | tr '\n' ' ')
+            # Get files to rsync as a real array. Passing the filenames to rsync
+            # via this array (instead of eval) stops the shell from interpreting
+            # spaces, backticks, $(...), redirections, etc. that appear in file names.
+            mapfile -t SYNCED_FILES_ARR < <(grep "|$NBLINKS|$INODE|" "$MOVER_ACTIONLIST" | grep "|$MODIFICATIONTIME|" | grep "ary|$SOURCE|" | cut -d'|' -f13 | while IFS= read -r line; do printf '%s\n' "$SOURCE/./$line"; done)
+
+            # SYNCED_FILES is a display/count string only, derived from the array so
+            # the extraction pipeline above runs only once per file.
+            SYNCED_FILES=""
+            [[ ${#SYNCED_FILES_ARR[@]} -gt 0 ]] && printf -v SYNCED_FILES '"%s" ' "${SYNCED_FILES_ARR[@]}"
             GUI_CURRENT_FILE=$SYNCED_FILES
 
-            # Check if list is complete
-            NBFILES=$(($(echo "$SYNCED_FILES" | grep -o '" "' | wc -l) + 1))
+            # Check if list is complete (array length is exact, unlike parsing the string)
+            NBFILES=${#SYNCED_FILES_ARR[@]}
             if [ -f "${SOURCE}/${FILEPATH}" ] && [ $NBFILES != "$NBLINKS" ]; then
                 mvlogger "Expected $NBLINKS files, got $NBFILES. Not moving $SYNCED_FILES to prevent breaking hardlinks"
                 continue
@@ -2182,7 +2285,7 @@ processTheMoves() {
                 mvlogger "Moving $SYNCED_FILES to  $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
                 rsync_action="Move"
                 # Finalize RSYNC_CMD
-                RSYNC_CMD+=" --remove-source-files"
+                RSYNC_CMD+=(--remove-source-files)
             elif [[ "$ACTION" =~ "sync" ]]; then
                 # Some verbosity
                 GUI_ACTION="Synchronizing to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
@@ -2225,16 +2328,21 @@ processTheMoves() {
                     # In test mode, simulate successful update for space tracking
                     updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
                 else
-                    mvDebuglogger "Rsync cmd: $RSYNC_CMD, $rsync_action $filetype: $SYNCED_FILES, Dest: $DESTINATION/" "$rsync_action Action"
+                    mvDebuglogger "Rsync cmd: ${RSYNC_CMD[*]}, $rsync_action $filetype: $SYNCED_FILES, Dest: $DESTINATION/" "$rsync_action Action"
                     # Perform rsync. relative paths and hardlinks
-                    eval "$RSYNC_CMD" "$SYNCED_FILES" "$DESTINATION/"
-                    rsync_exit_code=$?
-                    
-                    # Update pending disk usage based on rsync result
-                    if [ $rsync_exit_code -eq 0 ]; then
-                        updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
+                    if [ ${#SYNCED_FILES_ARR[@]} -gt 0 ]; then
+                        "${RSYNC_CMD[@]}" "${SYNCED_FILES_ARR[@]}" "$DESTINATION/"
+                        rsync_exit_code=$?
+
+                        # Update pending disk usage based on rsync result
+                        if [ $rsync_exit_code -eq 0 ]; then
+                            updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "success"
+                        else
+                            mvlogger "Rsync failed for $FILEPATH (exit code: $rsync_exit_code)"
+                            updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
+                        fi
                     else
-                        mvlogger "Rsync failed for $FILEPATH (exit code: $rsync_exit_code)"
+                        mvlogger "Error: No files found to move for $FILEPATH" "failure"
                         updatePendingDiskUsage "$DESTINATION" "$FILESIZE" "failure"
                     fi
                 fi
@@ -2242,8 +2350,12 @@ processTheMoves() {
 
             # Clean parent folder of files if empty
             if [[ "$ACTION" =~ "move" && "$FILETYPE" == "f" ]] && [[ "$CLEANFOLDERS" = "yes" || "$CLEANFOLDERS" = "topFolder" ]]; then
-                # Define a function to handle the directory cleanup logic
-                while IFS= read -r FILE; do
+                # Define a function to handle the directory cleanup logic.
+                # Iterate the array directly (was: echo "$SYNCED_FILES" | xargs),
+                # so filenames with quotes/spaces/special chars are handled safely.
+                for FILE in "${SYNCED_FILES_ARR[@]}"; do
+                    # Collapse the rsync --relative marker ("/./" -> "/")
+                    FILE="${FILE//\/.\//\/}"
                     DIR=$(dirname "$FILE")
                     mvDebuglogger "Current file: $FILE, Current folder: $DIR, Previous folder: $LAST_DIR, Previous count: $LAST_COUNT" "Clean Folder - Start Loop"
 
@@ -2288,7 +2400,7 @@ processTheMoves() {
                             fi
                         fi
                     fi
-                done <<<"$(echo "$SYNCED_FILES" | sed 's|/./|/|g' | xargs -n1 echo)"
+                done
             fi
 
             # Clean parent ZFS dataset if empty
@@ -2538,17 +2650,23 @@ processTheMoves() {
 start() {
 
     # Do not start if already running
-    if [ -f $PIDFILE ] && ps h $(cat $PIDFILE) | grep mover; then
-        mvlogger "mover: already running" "warning"
-        exit 1
+    if [ -f $PIDFILE ]; then
+        if ps h $(cat $PIDFILE) | grep -q mover; then
+            echo "mover: already running"
+            exit 1
+        fi
     fi
-    echo $$ >$PIDFILE
 
-    #Remove any old /var/run/moversoft.stop files
+    echo $$ >"$PIDFILE"
+
+    # Remove any old /var/run/moversoft.stop files
     if [ -e $SOFTSTOPFILE ]; then
         rm $SOFTSTOPFILE
         mvlogger "Mover soft stop file removed."
     fi
+
+    # Detect execution source (cron/cli/web)
+    detect_run_method
 
     # Only start if config OK
     if [ -f $UNRAIDCFGFILE ]; then
@@ -2568,7 +2686,7 @@ start() {
 
     #mvlogger "$(titleLine echo "Mover Tuning Plugin version $(grep -oP 'version=\K[^"]+' "$MOVERTUNINGCFGFILE")" '*')"
     mvlogger "$(titleLine "Mover Tuning Plugin version $(grep "^version=" "$MOVERTUNINGCFGFILE" | cut -d '"' -f 2)" '*')"
-    mvlogger "Log Level: $LOGLEVEL"
+    mvlogger "Run by: $RUN_METHOD"
 
     # Convert flags to readable text
     UNRAID_MOVER_ENABLED=$([ "$UNRAID_MOVER" = 1 ] && echo "yes" || echo "no")
@@ -2668,7 +2786,9 @@ start() {
         if [ -f "$AFTERSCRIPT" ] && [ -x "$AFTERSCRIPT" ]; then
             mvlogger "Launching after script: $AFTERSCRIPT"
             eval "$AFTERSCRIPT"
-            mvlogger "After script finished with result: $([ $? = 0 ] && echo "OK" || echo "$?")"
+            rc=$?
+            # rc is read instead of $?: [ overwrites $? before the || branch runs.
+            mvlogger "After script finished with result: $([ "$rc" = 0 ] && echo "OK" || echo "$rc")"
         else
             mvlogger "After script file $AFTERSCRIPT does not exist or is not executable."
             mvlogger "Skipping"
@@ -2767,43 +2887,6 @@ debug() {
     echo "move: done. ZIP file at /boot/logs/ca.mover.tuning-debug-<date-time>.zip created."
 }
 
-empty() {
-    DISK="$1"
-
-    if [ -f $PIDFILE ]; then
-        if ps h $(cat $PIDFILE) | grep mover; then
-            echo "mover: already running"
-            exit 1
-        fi
-    fi
-
-    echo $$ >/var/run/mover.pid
-    echo "mover: started"
-
-    shopt -s nullglob
-
-    # we can only empty share directories
-    for SHAREPATH in /mnt/$DISK/*; do
-        SHARE=$(basename "$SHAREPATH")
-        if [[ -d "$SHAREPATH" && -f "$CFGPATH/$SHARE.cfg" ]]; then
-            move "$SHAREPATH"
-        fi
-    done
-
-    # output list of files which could not be moved
-    # use 'find' in case huge number of files left in /mnt/$DISK
-    count=$(find /mnt/$DISK -mindepth 1 | wc -l)
-    if [ "$count" -gt 0 ]; then
-        find /mnt/$DISK -mindepth 1 -depth -printf 'move: %p Not moved\n' | head -n 100
-        if [ "$count" -gt 100 ]; then
-            echo "[output truncated to first 100 entries]"
-        fi
-    fi
-
-    rm -f $PIDFILE
-    echo "mover: finished"
-}
-
 killtree() {
     local pid=$1 child
 
@@ -2857,7 +2940,7 @@ usage() {
     echo "  start    - Start mover. Use 'start -e <disk_name>' to empty a disk."
     echo "  stop     - Forced stop mover."
     echo "  softstop - Soft stop mover. (Recommended)"
-    echo "  status    - Check if the mover is running."
+    echo "  status   - Check if the mover is running."
     echo "  reset    - Reset plugin config to default values and delete the override config folder."
     echo "  debug    - Create plugin diagnostics ZIP at /boot/logs/ca.mover.tuning-debug-<date-time>.zip"
     exit 1
@@ -2873,6 +2956,45 @@ validate_disk() {
         echo "Error: nothing mounted at /mnt/$1"
         usage
     fi
+}
+
+# Empty a single array disk. Retained on this fork because the plugin replaces
+# the native mover on every Unraid version, so age_mover is the only route to it.
+empty() {
+    DISK="$1"
+
+    if [ -f $PIDFILE ]; then
+        if ps h $(cat $PIDFILE) | grep -q mover; then
+            echo "mover: already running"
+            exit 1
+        fi
+    fi
+
+    echo $$ >/var/run/mover.pid
+    echo "mover: started"
+
+    shopt -s nullglob
+
+    # we can only empty share directories
+    for SHAREPATH in /mnt/$DISK/*; do
+        SHARE=$(basename "$SHAREPATH")
+        if [[ -d "$SHAREPATH" && -f "$CFGPATH/$SHARE.cfg" ]]; then
+            move "$SHAREPATH"
+        fi
+    done
+
+    # output list of files which could not be moved
+    # use 'find' in case huge number of files left in /mnt/$DISK
+    count=$(find /mnt/$DISK -mindepth 1 | wc -l)
+    if [ "$count" -gt 0 ]; then
+        find /mnt/$DISK -mindepth 1 -depth -printf 'move: %p Not moved\n' | head -n 100
+        if [ "$count" -gt 100 ]; then
+            echo "[output truncated to first 100 entries]"
+        fi
+    fi
+
+    rm -f $PIDFILE
+    echo "mover: finished"
 }
 
 status() {

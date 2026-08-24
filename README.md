@@ -35,6 +35,40 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.08.21
+    - fix: Improved detection of how scheduled and manual mover runs are initiated. *(masterwishx)*
+    - fix: Added safer checks to prevent multiple mover processes from running simultaneously.
+    - fix: Updated command validation to accept only supported mover commands.
+    - fix: Improved startup behavior and process-tracking reliability.
+    - fix: Removed unsupported empty-directory move handling.
+    - fix: Updated usage information to reflect only supported commands.    
+    - new: Web‑triggered mover operations now run fully in the background to keep the interface responsive. *(masterwishx — Thanks to chodeus for this PR fix)*
+    - new: Command‑line mover operations continue to wait for completion.
+    - fix: Redirected mover output and improved execution-status logging for better reliability.
+    - fix: Added validation for mover commands and priority settings before execution.
+    - fix: Stop operations continue to run synchronously.    
+    - fix: Updated post-install setup to consistently provide the `age_mover` command instead of `mover`. *(Thanks to chodeus for helping to fix)*
+
+- 2026.08.15
+    - fix: Safer handling of filenames with spaces and special characters in processTheMoves(). *(masterwishx - Thanks to Joly0 for this PR fix)*
+    - fix: Removed unsafe eval; rsync now runs through a proper Bash array for stable execution.
+    - fix: Improved dry-run output to better reflect real rsync behavior.
+    - fix: Reworked empty-folder cleanup for more predictable and reliable results.
+    - fix: Added clear handling when no source files are available.
+    - new: Faster and safer path normalization using Bash substitution.
+
+- 2026.06.24
+    - new: Improved detection of how mover tuning was started, giving clearer identification of cron, CLI, or web-triggered runs. *(masterwishx)*
+    - new: Added a readable "Run by" entry in startup logs for easier troubleshooting.
+    - fix: Unified logging format across CLI, web UI, and scheduled runs for consistent output.
+    - fix: Enhanced debug log readability for mover-related operations.
+    - fix: Corrected missing syslog output for non-cron mover runs (CLI and Web UI now log properly).
+
+- 2026.06.05
+    - new: Added a new option "Share size calculation" in Mover Tuning, helping avoid slow scans on large or busy shares. *(masterwishx)*
+    - new: Cache reserved-space logic now respects the share-size calculation setting.
+    - new: Improved log messages for missing shares or pool folders, with a hint to clean unused shares via the *Shares → Clean Up* button.
+
 - 2026.04.01
     - new: Adjusted wildcard pattern detection logic in file filtering operations. *(masterwishx)*
     - new: Added handling of wildcard patterns in ignored file entries, wildcards now exclude matching files recursively without size tracking. *(Joly0)*

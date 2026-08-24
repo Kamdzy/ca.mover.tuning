@@ -14,12 +14,48 @@ if (!empty($_GET['check'])) {
     exit;
 }
 
+/**
+ * Write a message to syslog under the "move" tag, when plugin logging is enabled.
+ *
+ * @param string $string Message to log.
+ * @return void
+ */
 function logger($string)
 {
     global $cfg;
 
     if ($cfg['logging'] == 'yes') {
         exec("logger -t move " . escapeshellarg($string));
+    }
+}
+
+/**
+ * Launch a mover command, detaching it when the caller is a web request.
+ *
+ * A mover run can last hours. Under the web UI the request stream is the
+ * process's stdout, so a disconnect SIGPIPEs the mover and any before/after
+ * script. CLI and cron keep the blocking behaviour because their stdout is
+ * already durable.
+ *
+ * @param string $cmd Full shell command line used to launch the mover.
+ * @return void
+ */
+function runMover($cmd)
+{
+    if (PHP_SAPI === 'cli') {
+        passthru($cmd);
+        return;
+    }
+
+    logger("Detached from web request; mover output continues in syslog and the mover log");
+    // stdout is discarded rather than piped to logger: on this path age_mover's
+    // mvlogger already writes each message to syslog, so piping would double it.
+    exec($cmd . " >/dev/null 2>&1 &");
+
+    // Wait for the run to claim the pid file so the page's status poll does
+    // not race a mover that has not started yet.
+    for ($i = 0; $i < 50 && file_exists("/var/run/mover.pid") === false; $i++) {
+        usleep(100000);
     }
 }
 
@@ -86,16 +122,41 @@ function startMover()
         logger("Cron + options: $options");
     }
 
+    // $options, moverNice and moverIO are the only values interpolated into the
+    // mover command line, and all three come from fixed sets: age_mover's own
+    // command list, and the two priority dropdowns on the settings page.
+    // Anything else is rejected rather than handed to a shell.
+    // "start -e diskN" is admitted as a second shape: this plugin replaces the
+    // native mover on every Unraid version, so age_mover is the only route to it.
+    $allowedCommands = ["start", "stop", "softstop", "status", "reset", "debug"];
+    if (in_array($options, $allowedCommands, true) === false
+        && preg_match('/^start -e disk[0-9]+$/', $options) !== 1) {
+        // Logged unconditionally: logger() is gated on $cfg['logging'], and a
+        // silently rejected command on the only installed mover is undebuggable.
+        exec("logger -t move " . escapeshellarg("Refusing to run mover: unrecognised command '$options'"));
+        if (PHP_SAPI === 'cli') {
+            fwrite(STDERR, "mover: unrecognised command '$options'\n");
+        }
+        exit(1);
+    }
+
+    $allowedIO = ["-c 2 -n 0", "-c 2 -n 7", "-c 3"];
+    $niceLevel = (string) (int) ($cfg['moverNice'] ?? 0);
+    $ioLevel = in_array($cfg['moverIO'] ?? "", $allowedIO, true) === true ? $cfg['moverIO'] : "-c 2 -n 0";
+
+    // Always use age_mover since we override the mover command for all versions.
+    // Hoisted above the guards below so the status branch can use it.
+    $mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
+
+    // status is answered before the "already running" guard below, since the
+    // only time it is interesting is while a run is in progress.
     if ($options == "status") {
-        exec("echo 'running status update' >> /var/log/syslog");
-        $niceLevel = $cfg['moverNice'] ?: "0";
-        $ioLevel = $cfg['moverIO'] ?: "-c 2 -n 0";
-        $age_mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover status";
-        logger("ionice $ioLevel nice -n $niceLevel $age_mover_str");
-        passthru("ionice $ioLevel nice -n $niceLevel $age_mover_str");
+        logger("ionice $ioLevel nice -n $niceLevel $mover_str status");
+        passthru("ionice $ioLevel nice -n $niceLevel $mover_str status");
         exit();
     }
-    
+
+
     if ($options != "stop") {
         clearstatcache();
         $pid = @file_get_contents("/var/run/mover.pid");
@@ -113,25 +174,15 @@ function startMover()
         }
     }
 
-    // Always use age_mover since we override the mover command for all versions
-    $mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
-
     if ($options == "stop") {
-        $niceLevel = $cfg['moverNice'] ?: "0";
-        $ioLevel = $cfg['moverIO'] ?: "-c 2 -n 0";
-        // logger("ionice $ioLevel nice -n $niceLevel /usr/local/sbin/mover.old stop");
-        // passthru("ionice $ioLevel nice -n $niceLevel /usr/local/sbin/mover.old stop");
-
-        logger("ionice $ioLevel nice -n $niceLevel /usr/local/emhttp/plugins/ca.mover.tuning/age_mover stop");
-        passthru("ionice $ioLevel nice -n $niceLevel /usr/local/emhttp/plugins/ca.mover.tuning/age_mover stop");
+        logger("ionice $ioLevel nice -n $niceLevel $mover_str stop");
+        passthru("ionice $ioLevel nice -n $niceLevel $mover_str stop");
         exit();
     }
 
     if ($options == "softstop") {
-        $niceLevel = $cfg['moverNice'] ?: "0";
-        $ioLevel = $cfg['moverIO'] ?: "-c 2 -n 0";
-        logger("ionice $ioLevel nice -n $niceLevel /usr/local/emhttp/plugins/ca.mover.tuning/age_mover softstop");
-        passthru("ionice $ioLevel nice -n $niceLevel /usr/local/emhttp/plugins/ca.mover.tuning/age_mover softstop");
+        logger("ionice $ioLevel nice -n $niceLevel $mover_str softstop");
+        passthru("ionice $ioLevel nice -n $niceLevel $mover_str softstop");
         exit();
     }
 
@@ -140,22 +191,18 @@ function startMover()
 
     if ($cron or $cfg['movenow'] == "yes") {
         //exec("echo 'running from cron or move now question is yes' >> /var/log/syslog");
-        $niceLevel = $cfg['moverNice'] ?: "0";
-        $ioLevel = $cfg['moverIO'] ?: "-c 2 -n 0";
 
         if ($cfg['movingThreshold'] >= 0 or $cfg['fillupThreshold'] >= 0 or $cfg['age'] == "yes" or $cfg['sizef'] == "yes" or $cfg['sparsnessf'] == "yes" or $cfg['filelistf'] == "yes" or $cfg['filetypesf'] == "yes" or $cfg['beforescript'] != '' or $cfg['afterscript'] != '' or $cfg['testmode'] == "yes") {
             $age_mover_str = "/usr/local/emhttp/plugins/ca.mover.tuning/age_mover";
             //exec("echo 'about to hit mover string here: $age_mover_str' >> /var/log/syslog");
             logger("ionice $ioLevel nice -n $niceLevel $age_mover_str $options");
-            passthru("ionice $ioLevel nice -n $niceLevel $age_mover_str $options");
+            runMover("ionice $ioLevel nice -n $niceLevel $age_mover_str $options");
         }
     } else {
         //exec("echo 'Running from button' >> /var/log/syslog");
         //Default "move now" button has been hit.
-        $niceLevel = $cfg['moverNice'] ?: "0";
-        $ioLevel = $cfg['moverIO'] ?: "-c 2 -n 0";
         logger("ionice $ioLevel nice -n $niceLevel $mover_str $options");
-        passthru("ionice $ioLevel nice -n $niceLevel $mover_str $options");
+        runMover("ionice $ioLevel nice -n $niceLevel $mover_str $options");
     }
 }
 
