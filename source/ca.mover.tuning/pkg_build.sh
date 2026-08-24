@@ -22,7 +22,9 @@ update_content="$(dirname $(dirname "$DIR"))/.updates.txt"
 # Step 0: Change to current version in $default_config_file
 sed -i "s/version=.*/version=\"$version\"/" "$default_config_file"
 
-cp --parents -f $(find . -type f ! \( -iname "pkg_build.sh" -o -iname "sftp-config.json"  \) ) $tmpdir/
+# *pkg_build.sh so local wrappers (custom_pkg_build.sh) are excluded too --
+# they are not part of the plugin and would install to the filesystem root.
+cp --parents -f $(find . -type f ! \( -iname "*pkg_build.sh" -o -iname "sftp-config.json"  \) ) $tmpdir/
 
 cd $tmpdir
 

@@ -35,6 +35,21 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.08.25
+    - new: Merged upstream masterwishx 2026.08.21, including the rsync shell-injection fix, the command allowlist, detached web-triggered runs, and the new Share size calculation option. **_(Kamdzy)_**
+    - fix: Skip File List was never applied. The lookup read the mover's own stdin instead of the list file, so under cron no skip entry was excluded from the scan and none counted toward the threshold; run interactively it hung waiting on the terminal.
+    - fix: Mover now reports "mover: already running" to the mover log and the Unraid notification area again, instead of only to stdout where scheduled runs discard it.
+    - fix: Soft stop could never take effect. It was handled after the "already running" check, which exits during exactly the run a soft stop is meant to end.
+    - fix: Web-triggered runs logged "Run by: unknown". The run source is now passed explicitly, since detaching the run hides its origin.
+    - fix: "Move Now" and the Main page "Move" are described correctly on the settings page. On this build they run Mover Tuning, not the built-in Unraid mover.
+    - new: `mover --help` prints the plugin command list instead of exiting silently.
+    - fix: `mover start -e <disk>` (empty a disk) restored, removed upstream. This build replaces the built-in mover on every Unraid version, so it is the only route to that command.
+    - fix: default.cfg is newline-terminated, so Reset no longer produces a malformed last setting.
+    - fix: Removed the priority-disk space tracking that never ran, a duplicate ignore-list matcher, and a sort key that pointed at the wrong column. Disk priority mapping and the ignore list are unchanged in behaviour.
+    - fix: Removed an unused Move Now handler that started the mover without the parity, already-running and priority checks.
+    - fix: Local build wrappers are no longer included in the package.
+
+
 - 2026.08.21
     - fix: Improved detection of how scheduled and manual mover runs are initiated. *(masterwishx)*
     - fix: Added safer checks to prevent multiple mover processes from running simultaneously.
