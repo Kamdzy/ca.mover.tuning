@@ -131,15 +131,23 @@ function startMover()
     // "start -e diskN" is admitted as a second shape: this plugin replaces the
     // native mover on every Unraid version, so age_mover is the only route to it.
     $allowedCommands = ["start", "stop", "softstop", "status", "reset", "debug"];
-    if (in_array($options, $allowedCommands, true) === false
-        && preg_match('/^start -e disk[0-9]+$/', $options) !== 1) {
-        // Logged unconditionally: logger() is gated on $cfg['logging'], and a
-        // silently rejected command on the only installed mover is undebuggable.
-        exec("logger -t move " . escapeshellarg("Refusing to run mover: unrecognised command '$options'"));
-        if (PHP_SAPI === 'cli') {
-            fwrite(STDERR, "mover: unrecognised command '$options'\n");
+    $isHelp = in_array($options, ["--help", "-h", "help"], true);
+    if ($isHelp
+        || (in_array($options, $allowedCommands, true) === false
+            && preg_match('/^start -e disk[0-9]+$/', $options) !== 1)) {
+        if (!$isHelp) {
+            // Logged unconditionally: logger() is gated on $cfg['logging'], and a
+            // silently rejected command on the only installed mover is undebuggable.
+            exec("logger -t move " . escapeshellarg("Refusing to run mover: unrecognised command '$options'"));
         }
-        exit(1);
+        if (PHP_SAPI === 'cli') {
+            if (!$isHelp) {
+                fwrite(STDERR, "mover: unrecognised command '$options'\n");
+            }
+            // age_mover's usage() is the single source of truth for the command list.
+            passthru("/usr/local/emhttp/plugins/ca.mover.tuning/age_mover --help");
+        }
+        exit($isHelp ? 0 : 1);
     }
 
     $allowedIO = ["-c 2 -n 0", "-c 2 -n 7", "-c 3"];
