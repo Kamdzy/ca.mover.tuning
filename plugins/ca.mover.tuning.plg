@@ -23,7 +23,7 @@
 - fix: Web-triggered runs logged "Run by: unknown". The run source is now passed explicitly, since detaching the run hides its origin.
 - fix: "Move Now" and the Main page "Move" are described correctly on the settings page. On this build they run Mover Tuning, not the built-in Unraid mover.
 - new: `mover --help` prints the plugin command list instead of exiting silently.
-- fix: `mover start -e <disk>` (empty a disk) restored, removed upstream. This build replaces the built-in mover on every Unraid version, so it is the only route to that command.
+- fix: `mover start -e diskN` (empty a disk) restored, removed upstream. This build replaces the built-in mover on every Unraid version, so it is the only route to that command.
 - fix: default.cfg is newline-terminated, so Reset no longer produces a malformed last setting.
 - fix: Removed the priority-disk space tracking that never ran, a duplicate ignore-list matcher, and a sort key that pointed at the wrong column. Disk priority mapping and the ignore list are unchanged in behaviour.
 - fix: Removed an unused Move Now handler that started the mover without the parity, already-running and priority checks.
