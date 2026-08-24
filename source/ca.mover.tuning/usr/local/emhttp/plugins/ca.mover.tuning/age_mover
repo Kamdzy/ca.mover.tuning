@@ -1547,8 +1547,16 @@ createFilteredFilelist() {
         fi
     done
 
-    # Sort the file list by PRIORITY (descending), PRIMARYSTORAGENAME, shareusecache, creation/modification time, and inode, keeping /mnt/disk at the end
-    sort -t '|' -k12,12nr -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
+    # Sort by PRIMARYSTORAGENAME, shareusecache, modification time (newest first)
+    # and inode, keeping /mnt/disk at the end.
+    #
+    # Deliberately NOT sorted by HASPRIORITY (field 13). decideMoveActions walks
+    # this list accumulating pool_sums and keeps rows until the threshold is
+    # reached, then moves the rest -- so the head is KEPT and the tail is MOVED.
+    # Sorting priority files to the head would pin them on the cache instead of
+    # sending them to their mapped disks. Priority routing is applied per file
+    # from the path and size in decideMoveActions, and does not depend on order.
+    sort -t '|' -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
     # Need to remove duplicate (cache and array)
     if grep -q "/mnt/disk" "$FILTERED_FILELIST"; then
         mvlogger "$(titleLine 'Optimizing Filtered Filelist' '-')"
@@ -1598,7 +1606,8 @@ createFilteredFilelist() {
                 }
             }' >"$FILTERED_FILELIST"
         mvlogger "Sorting"
-        sort -t '|' -k12,12nr -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
+        # Same ordering as above - see the note there on why HASPRIORITY is not a key.
+        sort -t '|' -k1,1 -k4,4 -k5,5nr -k10,10 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
         rm "$tempfile1" "$tempfile2"
     fi
 }
