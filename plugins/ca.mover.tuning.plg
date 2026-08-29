@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2026.08.25">
-<!ENTITY md5       "dd8b2e9f239386f530e1ac5baa18f82f">
+<!ENTITY version   "2026.08.29">
+<!ENTITY md5       "cd4967a136abda64f6173d5574d7cdb7">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,12 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2026.08.29
+- new: Merged upstream masterwishx 2026.08.29. Move decisions now use projected pool usage, tracked per file through filtering, planning and execution, instead of raw cumulative file size. Threshold evaluation was corrected for all share modes (yes, prefer and only). **_(masterwishx)_**
+- fix: Disk Priority Mappings and the Ignore List were rebuilt on upstream's new file list layout, which adds a pool-usage column and moves the file path to the end of each row. Behaviour is unchanged; both were re-verified against live data.
+- fix: Skip File Types still escapes "!" correctly after upstream reworked that block.
+
+
 ###2026.08.25
 - new: Merged upstream masterwishx 2026.08.21, including the rsync shell-injection fix, the command allowlist, detached web-triggered runs, and the new Share size calculation option. **_(Kamdzy)_**
 - fix: Skip File List was never applied. The lookup read the mover's own stdin instead of the list file, so under cron no skip entry was excluded from the scan and none counted toward the threshold; run interactively it hung waiting on the terminal.
