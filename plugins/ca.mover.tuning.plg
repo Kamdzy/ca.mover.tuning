@@ -526,21 +526,18 @@
     exit(1);
   }
 
-  // NEW: Breaking-changes notice for Unraid >= 7.2.1
-  if (version_compare($version['version'], "7.2.1", ">=")) {
-    echo "====================================================================================================\n" .
-         " IMPORTANT: Starting with Unraid 7.2.1, Mover Tuning behavior has changed:\n" .
-         " --------------------------------------------------------------------------------------------------\n" .
-         " • The plugin is now separated from the built-in Unraid mover.\n" .
-         " • “Move Now” in Mover Settings runs the built-in Unraid mover.\n" .
-         " • “Move” on the Main page also runs the Unraid mover.\n" .
-         " • “Move Now” in Mover Tuning → Options runs age_mover.\n" .
-         " • To disable the built-in mover schedule, set it to Disabled in Mover Settings.\n" .
-         " • Use the “Mover Tuning Schedule” (Plugin Settings) to schedule Mover Tuning instead.\n" .
-         " • The Unraid mover can still be triggered through the “Force move all files on a schedule” option.\n" .
-         " • In the CLI, use “age_mover --help” for plugin commands. Running “mover --help” will call the built-in Unraid mover.\n" .
-         "====================================================================================================\n\n";
-  }
+  // Fork build notice -- Kamdzy/ca.mover.tuning replaces the built-in mover on every Unraid version.
+  echo "====================================================================================================\n" .
+       " IMPORTANT: This build replaces the built-in Unraid mover on every Unraid version.\n" .
+       " --------------------------------------------------------------------------------------------------\n" .
+       " * Plugin installs as /usr/local/sbin/mover; the original is preserved as /usr/local/sbin/mover.old.\n" .
+       " * \"Move Now\" (Mover Settings) and the Main-page \"Move\" both run Mover Tuning (age_mover).\n" .
+       " * \"Move Now\" in Mover Tuning -> Options also runs age_mover.\n" .
+       " * To disable the built-in mover schedule, set \"Mover schedule\" to Disabled in Mover Settings.\n" .
+       " * Use the \"Mover Tuning Schedule\" (Plugin Settings) to schedule Mover Tuning instead.\n" .
+       " * The original Unraid mover can still be triggered through \"Force move all files on a schedule\" -- it calls mover.old.\n" .
+       " * In the CLI, both \"mover --help\" and \"age_mover --help\" print the plugin command list.\n" .
+       "====================================================================================================\n\n";
  ?>
 ]]>
 </INLINE>
