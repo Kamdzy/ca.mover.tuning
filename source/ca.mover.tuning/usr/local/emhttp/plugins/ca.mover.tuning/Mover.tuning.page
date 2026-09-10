@@ -23,8 +23,9 @@ $cronDisabled = ($cfg['force'] != "yes") ? "disabled" : "";
 $filelistfDisabled = ($cfg['filelistf'] != "yes") ? "disabled" : "";
 $filetypesfDisabled = ($cfg['filetypesf'] != "yes") ? "disabled" : "";
 $omoverthreshDisabled = ($cfg['omovercfg'] != "yes") ? "disabled" : "";
-$om = $cfg['movingThreshold']; $om = $om + 5;
-$f = $cfg['movingThreshold'];
+$movingSaved = (int)($cfg['movingThreshold'] ?? 0);
+$om = $movingSaved + 5;
+$f = $movingSaved;
 $sizefDisabled = ($cfg['sizef'] != "yes") ? "disabled" : "";
 $sizefSyncDisabled = ($cfg['sizefSync'] != "yes") ? "disabled" : "";
 $sparsnessfDisabled = ($cfg['sparsnessf'] != "yes") ? "disabled" : "";
@@ -235,6 +236,76 @@ function updateScreenMoverInvalidCharsToBlock(option,slow) {
   }
 }
 
+// What the config holds, before the selects below capped it to a range.
+var mtSaved = {
+  moving:   <?=(int)($cfg['movingThreshold'] ?? 0)?>,
+  freeing:  <?=(int)($cfg['freeingThreshold'] ?? 0)?>,
+  omover:   <?=strlen((string)($cfg['omoverthresh'] ?? '')) ? (int)$cfg['omoverthresh'] : 'null'?>,
+  omoverOn: <?=(($cfg['omovercfg'] ?? '') == 'yes') ? 'true' : 'false'?>
+};
+
+// Refills one select over [from..to]. Returns '' when the current value survived, else the
+// value it was clamped to.
+function mtFillRange(sel, from, to, step) {
+  var $sel = $(sel);
+  if (!$sel.length) return '';
+  if (step > 0 && from > to) from = to;
+  if (step < 0 && from < to) from = to;
+  var prev = $sel.val(), html = '', keep = false;
+  for (var v = from; step > 0 ? v <= to : v >= to; v += step) {
+    html += '<option value="' + v + '">' + v + ' %</option>';
+    if (String(v) === prev) keep = true;
+  }
+  $sel.html(html);
+  $sel.val(keep ? prev : $sel.find('option').first().val());
+  return keep ? '' : $sel.val();
+}
+
+function mtNotice(id, text) {
+  var $n = $(id);
+  if (!$n.length) return;
+  if (text) $n.html('<i class="fa fa-warning"></i> ' + text).show(); else $n.hide();
+}
+
+// Both ranges are derived from the moving threshold, so a range left over from an older
+// moving value would save a number nobody picked.
+function mtRebuildThresholds(moving) {
+  moving = parseInt(moving, 10) || 0;
+
+  var freeing = mtFillRange('select[name="freeingThreshold"]', moving, 0, -5);
+  mtNotice('#freeing_notice', freeing ? 'Freeing threshold lowered to ' + freeing +
+    '% to stay at or below the moving threshold.' : '');
+
+  var $om = $('select[name="omoverthresh"]');
+  var omover = mtFillRange($om, moving + 5, 100, 5);
+  mtNotice('#omoverthresh_notice', (omover && !$om.prop('disabled')) ?
+    'Move All threshold raised to ' + omover + '% to stay above the moving threshold.' : '');
+}
+
+// A config saved before the ranges tracked each other can hold a combination this page cannot
+// show, so it would display one value and store another until the next save.
+function mtWarnSavedThresholds() {
+  var msgs = [];
+  if (mtSaved.freeing > mtSaved.moving) {
+    msgs.push('The saved freeing threshold is ' + mtSaved.freeing + '%, above the moving threshold of ' +
+      mtSaved.moving + '%. The mover starts at ' + mtSaved.moving + '% and stops at ' + mtSaved.freeing +
+      '%, so nothing is moved while the pool sits between them. This page now shows ' +
+      $('select[name="freeingThreshold"]').val() + '%, and saving will store that.');
+  }
+  if (mtSaved.omoverOn && mtSaved.omover !== null && mtSaved.omover <= mtSaved.moving) {
+    msgs.push('The saved Move All threshold is ' + mtSaved.omover + '%, at or below the moving threshold ' +
+      'of ' + mtSaved.moving + '%. Everything on cache:yes shares moves, skip list and filters ignored, ' +
+      'before the moving threshold is reached. This page now shows ' +
+      $('select[name="omoverthresh"]').val() + '%, and saving will store that.');
+  }
+  if (!msgs.length) return;
+  if (typeof swal === 'function') {
+    swal({title: 'Mover Tuning thresholds', text: msgs.join('\n\n'), type: 'warning', confirmButtonText: 'OK'});
+  } else {
+    mtNotice('#freeing_notice', msgs.join(' '));
+  }
+}
+
 $(function() {
   updateScreenMoverTuningSettings('<? echo $moverDisabled ?>');
   updateScreenMoverAdvancedSettings('<? echo $advancedSettings ?>');
@@ -245,6 +316,13 @@ $(function() {
   toggleTime('ctime');
   toggleTime('atime');
   toggleAge($('select[name="age"]').val());
+
+  // the share page omits these selects for cache:prefer and unavailable shares
+  var $moving = $('select[name="movingThreshold"]');
+  if ($moving.length) {
+    mtRebuildThresholds($moving.val());
+    mtWarnSavedThresholds();
+  }
 });
 </script>
 
@@ -646,7 +724,7 @@ _(Move Now button follows plug-in filters)_:
 <div class="title"><span class="center"><i class="fa fa-filter title"></i>Mover Tuning - Filters</span></div>
 
 _(Only move if above this threshold of used Primary (<em>cache</em>) space)_:
-: <select name="movingThreshold" size="1">
+: <select name="movingThreshold" size="1" onchange="mtRebuildThresholds(this.value)">
 <?for ($t=95;$t>=0;$t-=5):?>
 <?=mk_option($cfg['movingThreshold'], $t, "$t %")?>
 <?endfor;?>
@@ -660,12 +738,13 @@ _(Only move if above this threshold of used Primary (<em>cache</em>) space)_:
 </blockquote>
 
 _(Free down/prime up to this level of used Primary (<em>cache</em>) space)_:
-: <select name="freeingThreshold" size="1">
+: <select name="freeingThreshold" size="1" onchange='mtNotice("#freeing_notice","")'>
 <?for ($f=$f;$f>=0;$f-=5):?>
 <?=mk_option($cfg['freeingThreshold'], $f, "$f %")?>
 <?endfor;?>
 </select>
 <span><i class="fa fa-info i"></i>&nbsp;&nbsp;<em>Cache → Array</em></span>
+<span id="freeing_notice" class="orange-text" style="display:none; font-style:italic;"></span>
 
 <blockquote class="inline_help">
 <p> Set to the amount of disk space used on the <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) drive after the mover has completed its run. Setting this to (<strong><em> 0% </em></strong>) means that the mover will continue until all data is moved off the cache pool.</p>
@@ -874,11 +953,12 @@ _(Move All from Primary->Secondary (cache:yes) shares when disk is above a certa
 </blockquote>
 
 _(Move All from Primary->Secondary shares pool percentage)_:
-: <select name="omoverthresh" size="1" class='myomthresh' <?=$omoverthreshDisabled?>>
+: <select name="omoverthresh" size="1" class='myomthresh' <?=$omoverthreshDisabled?> onchange='mtNotice("#omoverthresh_notice","")'>
 <?for ($om;$om<=100;$om+=5):?>
 <?=mk_option($cfg['omoverthresh'], $om, "$om %")?>
 <?endfor;?>
 </select>
+<span id="omoverthresh_notice" class="orange-text" style="display:none; font-style:italic;"></span>
 
 <blockquote class="inline_help">
 <p>Set to the amount of disk space used on the Primary pool to initiate a move of all files in a <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) share.</p>

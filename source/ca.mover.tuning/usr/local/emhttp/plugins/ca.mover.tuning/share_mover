@@ -5,6 +5,10 @@ UNRAIDCFGFILE="/boot/config/share.cfg"
 MOVERTUNINGCFGFILE="/boot/config/plugins/ca.mover.tuning/ca.mover.tuning.cfg"
 LOGLEVEL=0
 
+# Wraps a path for a log message: the debug package ends a path at the quote, so an
+# embedded quote - an edge case, but the last redaction hole - would expose the rest.
+qp() { local p=${1//\\/\\\\}; printf '"%s"' "${p//\"/\\\"}"; }
+
 # Function for verbose output and logging
 mvlogger() {
     if [ $LOGLEVEL = 1 ]; then
@@ -135,7 +139,13 @@ if ! mountpoint -q /mnt/user0 && [ $(ls /boot/config/pools/*.cfg | wc -l) -lt 2 
     exit 5
 fi
 
-echo $$ >/var/run/mover.pid
+# Remove the pid file only while it still names this run, so overlapping runs cannot delete each other's
+pid_cleanup() {
+    [ "$(cat "$PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$PIDFILE"
+}
+trap pid_cleanup EXIT
+trap 'exit 143' HUP INT TERM
+echo $$ >"$PIDFILE"
 
 shopt -s nullglob
 
@@ -154,9 +164,9 @@ if grep -qs 'shareUseCache="yes\|shareUseCache="prefer"' "$SHARECFG"; then
     # Check if the storage exists
     if [ ! -d "/mnt/$PRIMARYSTORAGENAME" ]; then
         # Do not process this pool if path does not exist
-        mvlogger "/mnt/$PRIMARYSTORAGENAME does not exist. Is the pool still used? Consider removing $SHARECFG if not."
+        mvlogger "$(qp "/mnt/$PRIMARYSTORAGENAME") does not exist. Is the pool still used? Consider removing $SHARECFG if not."
         mvlogger "=> Skipping"
-        exit # Move to the next iteration of the loop
+        exit
     fi
 
     # Determine secondary storage
@@ -183,7 +193,7 @@ if grep -qs 'shareUseCache="yes\|shareUseCache="prefer"' "$SHARECFG"; then
     mvlogger "Share Information: Name: $SHARENAME - Path: $SHAREPATH"
     if [ ! -d "$SHAREPATH" ]; then # && [ $SHAREUSECACHE != "no" ]
         # Do not process this pool if path does not exist
-        mvlogger "$SHAREPATH does not exist or is empty."
+        mvlogger "$(qp "$SHAREPATH") does not exist or is empty."
         mvlogger "=> Skipping"
     else
         mvlogger "$(titleLine 'LET THE MOVING SHOW BEGIN !' '*')"
@@ -233,11 +243,6 @@ if grep -qs 'shareUseCache="yes\|shareUseCache="prefer"' "$SHARECFG"; then
 
     fi
 fi
-
-mvlogger "Cleaning lock file"
-for file in $PIDFILE; do
-    [[ -e "$file" ]] && rm -f "$file"
-done
 
 mvlogger "$(titleLine 'WE ARE DONE !' '*')"
 [ $LOGLEVEL = 0 ] && echo "Mover tuning plugin done!"

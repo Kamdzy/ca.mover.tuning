@@ -76,6 +76,7 @@ LAST_DIR=""
 LAST_COUNT=-1
 LAST_FOLDER_COUNT=-1
 EMPTY_DIR_COUNT=-1
+declare -A POOL_FSTYPE_CACHE=()
 # Get parent Logs Folder from config, if blank set to default /tmp
 CONFIGLOGFOLDER=$(grep "loggingFolder=" "$MOVERTUNINGCFGFILE" | cut -d '"' -f 2)
 
@@ -117,8 +118,8 @@ move() {
     find "$1" -depth -type d 2>/dev/null | /usr/libexec/unraid/move $DEBUGGING
 }
 
-# Detect execution method by finding the top-level root ancestor process
-# (crond = Cron, ttyd = CLI, php-fpm = Web Button)
+# Detect execution method: MOVER_RUN_METHOD when the launcher names it, else the
+# top-level ancestor process (crond = Cron, ttyd/sshd = CLI, php-fpm = Web Button)
 UPPER_PROC=""
 curr_pid=$$
 IS_CRON=0
@@ -129,7 +130,7 @@ detect_run_method() {
     # before detaching a web-triggered run: once detached the process is
     # reparented, php-fpm is no longer an ancestor, and the walk below would
     # report "unknown" for exactly the case it was added to identify.
-    if [ -n "$MOVER_RUN_METHOD" ]; then
+    if [ -n "${MOVER_RUN_METHOD:-}" ]; then
         RUN_METHOD="$MOVER_RUN_METHOD"
         [ "$RUN_METHOD" = "cron" ] && IS_CRON=1
         return
@@ -164,7 +165,7 @@ detect_run_method() {
         RUN_METHOD="cron"
         IS_CRON=1
         ;;
-    ttyd) RUN_METHOD="cli" ;;
+    ttyd | sshd*) RUN_METHOD="cli" ;;
     php-fpm*) RUN_METHOD="web button" ;;
     *) RUN_METHOD="unknown" ;;
     esac
@@ -211,17 +212,27 @@ unraid_notify() {
     /usr/local/emhttp/webGui/scripts/notify -s "Mover Tuning Notification" -d "$message" -i "$severity" -l "/Settings/Scheduler"
 }
 
-is_zfs_mountpoint_fstype() {
-    local result
-    result=$(findmnt "$1" -o fstype | tail -n 1)
-    [ "$result" = "zfs" ]
-    return
+pool_fstype() {
+    # sets POOLFSTYPE, one findmnt per pool per run. Never call it inside $(...): the subshell drops the cache
+    POOLFSTYPE=""
+    [ -n "$1" ] || return 1
+    if [ -z "${POOL_FSTYPE_CACHE[$1]+x}" ]; then
+        local fstype
+        # do not cache a failed lookup: the pool would stay unknown for the rest of the run
+        fstype=$(findmnt -no fstype "/mnt/$1" | tail -n 1)
+        [ -n "$fstype" ] || return 1
+        POOL_FSTYPE_CACHE[$1]=$fstype
+    fi
+    POOLFSTYPE=${POOL_FSTYPE_CACHE[$1]}
+}
+
+is_zfs_pool() {
+    pool_fstype "$1" && [ "$POOLFSTYPE" = "zfs" ]
 }
 
 is_zfs_dataset_mountpoint() {
-    local mp
-    mp=$(findmnt -n -o TARGET "$1")
-    [ "$mp" = "$1" ] && is_zfs_mountpoint_fstype "$1"
+    # --mountpoint matches the exact path only, so a folder inside a dataset returns nothing
+    [ "$(findmnt -no fstype --mountpoint "$1" | tail -n 1)" = "zfs" ]
 }
 
 titleLine() {
@@ -244,6 +255,25 @@ bytes_to_human() {
 human_to_bytes() {
     local input="${1:-$(cat)}"
     numfmt --from=iec "$input"
+}
+
+# Exact bytes. `du -h` carries two significant digits and rounds up.
+du_total_bytes() {
+    local out
+    # du prints a total even on a partial read, so the status must be du's own
+    out=$(du -c --block-size=1 "$@" 2>/dev/null) || return 1
+    tail -n1 <<<"$out" | cut -f1
+}
+
+# Skip-list lines for this share. Literal match, not regex: share names may hold
+# regex metacharacters, and an unanchored substring also matches sibling shares.
+skiplist_share_lines() {
+    # prefix via ENVIRON, not -v: awk expands escape sequences in a -v value
+    SKIPLIST_PFX="/mnt/$1/$2" awk '
+        BEGIN { pfx = ENVIRON["SKIPLIST_PFX"] }
+        { sub(/\r$/, "") }   # the gate calls this before the CRLF fix below
+        index($0, pfx) == 1 && (length($0) == length(pfx) || substr($0, length(pfx) + 1, 1) == "/")
+    ' "$3"
 }
 
 # Sanitize input filename to prevent attacks
@@ -274,6 +304,13 @@ validate_filename() {
     return 0
 }
 
+# find's -path glob and the eval each strip one level, so a literal backslash
+# needs four. Order matters: backslash first, then '['.
+escape_find_path() {
+    FIND_PATH_ESC=${1//\\/\\\\\\\\}
+    FIND_PATH_ESC=${FIND_PATH_ESC//[/\\[}
+}
+
 # Function for verbose output and logging
 # $1 = message text
 # $2 = optional notify level
@@ -286,6 +323,10 @@ validate_filename() {
 #   1 → echo + log file
 #   2 → log file only
 #
+# Wraps a path for a log message: the debug package ends a path at the quote, so an
+# embedded quote - an edge case, but the last redaction hole - would expose the rest.
+qp() { local p=${1//\\/\\\\}; printf '"%s"' "${p//\"/\\\"}"; }
+
 mvlogger() {
     local msg="$1"
     local notify="$2"
@@ -584,6 +625,12 @@ getMoverSettings() {
         SKIPFOLDERSLIST=""
         # Read each line from the file in SKIPFILESPATH
         while IFS= read -r path; do
+            # Strip a trailing CR first: upstream added CRLF handling for skip lists in
+            # skiplist_share_lines() and via a sed -i, but neither reaches this fork-only
+            # derivation, and getMoverSettings runs before that sed. Without this, a CRLF
+            # skip list leaves CR on $path, [ -d "$path" ] is false, and SKIPFOLDERSLIST
+            # comes out silently empty.
+            path=${path%$'\r'}
             # Remove a trailing slash if present
             path=${path%/}
             # If the path belongs to a directory, append the wildcard pattern to SKIPFOLDERSLIST
@@ -1011,15 +1058,15 @@ createFilteredFilelist() {
         mvlogger "$(titleLine "Processing [$SHARENAME] share" '-')"
 
         #Check to see if this share has a mover settings override, if yes set overrideFlag and change settings
-        if [ -f "${MOVERTUNING_OVERRIDE_CFGFOLDER}/${SHARENAME}.cfg" ]; then
-            SHARETUNINGFILE="${MOVERTUNING_OVERRIDE_CFGFOLDER}/${SHARENAME}.cfg"
-            if grep -qs 'moverOverride="yes"' "$SHARETUNINGFILE"; then
-                overrideFlag=1
-                mvlogger "Settings override:"
-                mvlogger "------------------"
-                getMoverSettings "$SHARETUNINGFILE"
-                mvlogger "------------------------------------------------------------------------"
-            fi
+        SHARETUNINGFILE="${MOVERTUNING_OVERRIDE_CFGFOLDER}/${SHARENAME}.cfg"
+        if grep -qs 'moverOverride="yes"' "$SHARETUNINGFILE"; then
+            # Start from the global settings so the previous share's override cannot carry over
+            [ $overrideFlag = 1 ] && getMoverSettings "$MOVERTUNINGCFGFILE"
+            overrideFlag=1
+            mvlogger "Settings override:"
+            mvlogger "------------------"
+            getMoverSettings "$SHARETUNINGFILE"
+            mvlogger "------------------------------------------------------------------------"
         elif [ $overrideFlag = 1 ]; then
             #else if overrideFLag set from previous loop then restore global settings
             overrideFlag=0
@@ -1041,7 +1088,7 @@ createFilteredFilelist() {
         # Check if the storage exists
         if [ ! -d "/mnt/$PRIMARYSTORAGENAME" ]; then
             # Do not process this pool if path does not exist
-            mvlogger "/mnt/$PRIMARYSTORAGENAME does not exist. Is the pool still used? Consider removing $SHARECFG if not."
+            mvlogger "$(qp "/mnt/$PRIMARYSTORAGENAME") does not exist. Is the pool still used? Consider removing $SHARECFG if not."
             mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
             mvlogger "=> Skipping"
             continue # Move to the next iteration of the loop
@@ -1057,27 +1104,23 @@ createFilteredFilelist() {
             fi
         fi
 
-        # Find the current percent of used size of pool.
-        if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
-            #mvlogger "$PRIMARYSTORAGENAME is zfs."
+        # Pool usage and size in bytes. POOLSIZE is used+avail, not df's size: on
+        # btrfs those differ by the unallocated chunks, and POOLPCTUSED is measured against used+avail.
+        pool_fstype "$PRIMARYSTORAGENAME"
+        if is_zfs_pool "$PRIMARYSTORAGENAME"; then
             POOLPCTUSED=$(zfs list -Hpo available,used "$PRIMARYSTORAGENAME" | awk '{print int(($2 / ($1 + $2)) * 100)}')
             POOLBYTEUSED=$(zfs list -Hpo used "$PRIMARYSTORAGENAME")
+            POOLSIZE=$(zfs list -Hpo available,used "$PRIMARYSTORAGENAME" | awk '{print $1 + $2}')
         else
             POOLPCTUSED=$(df --output=pcent "/mnt/$PRIMARYSTORAGENAME" | tail -n 1 | tr -d '%')
             POOLBYTEUSED=$(df --output=used --block-size=1 "/mnt/$PRIMARYSTORAGENAME" | tail -n 1)
-        fi
-
-        # Get the size threshold in bytes
-        if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
-            POOLSIZE=$(zfs list -Hpo available,used "$PRIMARYSTORAGENAME" | awk '{print $1 + $2}')
-        else
-            POOLSIZE=$(df --output=size --block-size=1 "/mnt/$PRIMARYSTORAGENAME" | tail -n 1)
+            POOLSIZE=$(df --output=used,avail --block-size=1 "/mnt/$PRIMARYSTORAGENAME" | tail -n 1 | awk '{print $1 + $2}')
         fi
 
         # Calculate primary storage size thresholds in bytes
         if [ "$SHAREUSECACHE" = "prefer" ]; then
-            # Calculate the real free space by considering an upper limit of fillup (95%) minus pool used usage for later calculations
-            PRIMARYSIZETHRESH=$(((POOLSIZE - POOLBYTEUSED) * PREFER_FILLUPPCTLIMIT / 100))
+            # absolute pool-usage target to fill up to, not a share of free space
+            PRIMARYSIZETHRESH=$((POOLSIZE * PREFER_FILLUPPCTLIMIT / 100))
             MOVESIZETHRESH=$((POOLSIZE * PREFER_MOVINGPCTTHRESHOLD / 100))
         else
             PRIMARYSIZETHRESH=$((POOLSIZE * FREEINGPCTLIMIT / 100))
@@ -1085,7 +1128,7 @@ createFilteredFilelist() {
         fi
 
         # Print pool info:
-        mvlogger "Primary storage: $PRIMARYSTORAGENAME - size: $(bytes_to_human $POOLSIZE) - used: $POOLPCTUSED % ($(bytes_to_human $POOLBYTEUSED))"
+        mvlogger "Primary storage: $PRIMARYSTORAGENAME (${POOLFSTYPE:-unknown}) - size: $(bytes_to_human $POOLSIZE) - used: $POOLPCTUSED % ($(bytes_to_human $POOLBYTEUSED))"
         mvlogger "Secondary storage: $SECONDARYSTORAGENAME"
 
         # Find unattended storage for a share when rebalancing shares
@@ -1115,14 +1158,14 @@ createFilteredFilelist() {
 
         if [ ! -d "$SHAREPATH" ]; then # && [ $SHAREUSECACHE != "no" ]
             # Check if share mount point is ZFS
-            if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
+            if is_zfs_pool "$PRIMARYSTORAGENAME"; then
                 # Do not process this pool if path does not exist
-                mvlogger "$SHAREPATH does not exist. Is the ZFS dataset not created yet? Copy files to '/mnt/user/$SHARENAME' first."
+                mvlogger "$(qp "$SHAREPATH") does not exist. Is the ZFS dataset not created yet? Copy files to $(qp "/mnt/user/$SHARENAME") first."
                 mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
                 mvlogger "=> Skipping"
             else
                 # Do not process this pool if path does not exist
-                mvlogger "$SHAREPATH does not exist. Is the share still used? Consider removing $SHARECFG if not."
+                mvlogger "$(qp "$SHAREPATH") does not exist. Is the share still used? Consider removing $SHARECFG if not."
                 mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
                 mvlogger "=> Skipping"
             fi
@@ -1161,7 +1204,7 @@ createFilteredFilelist() {
                         COUNT_SECONDARY_FILES=$((COUNT_SECONDARY_FILES + tmp))
                     else
                         # Do not process this pool if path does not exist
-                        mvlogger "$PRIMARY_SHAREPATH exist but $SECONDARY_SHAREPATH does not exist. Is the share on secondary storage not created yet?"
+                        mvlogger "Nothing to bring back: this cache:prefer share has no files on secondary storage ($(qp "$SECONDARY_SHAREPATH") does not exist)."
                         mvlogger "=> Skipping"
                         continue # Move to the next iteration of the loop
                     fi
@@ -1180,7 +1223,7 @@ createFilteredFilelist() {
                     # Check if no paths were found
                     if [[ -z "$PREFER_SHAREPATH" ]]; then
                         # Do not process this pool if path does not exist
-                        mvlogger "$PRIMARY_SHAREPATH exist but no disk paths found for $SHARENAME in $SECONDARYSTORAGENAME. Is the share on secondary storage not created yet?"
+                        mvlogger "Nothing to bring back: this cache:prefer share has no files on the array (no \"$SHARENAME\" folder on any array disk)."
                         mvlogger "=> Skipping"
                         continue # Move to the next iteration of the loop
                     fi
@@ -1206,6 +1249,7 @@ createFilteredFilelist() {
             fi
         elif [ "$SHAREUSECACHE" = "yes" ]; then
             mvlogger "Moving threshold: $MOVINGPCTTHRESHOLD% ($(bytes_to_human $MOVESIZETHRESH)) ; Freeing threshold: $FREEINGPCTLIMIT% ($(bytes_to_human $PRIMARYSIZETHRESH))"
+            [ $overrideFlag = 1 ] && warn_freeing_above_moving
             if [ "$REBALANCESHARES" = "yes" ] && [ -n "$UNATTENDEDSTORAGE" ]; then
                 mvlogger "Mover action: $PRIMARYSTORAGENAME->$SECONDARYSTORAGENAME (cache:yes). Rebalance shares option is selected"
                 mvlogger "=> Files detected in $UNATTENDEDSTORAGE instead of $PRIMARYSTORAGENAME or $SECONDARYSTORAGENAME. They will be rebalanced to $SECONDARYSTORAGENAME."
@@ -1242,17 +1286,21 @@ createFilteredFilelist() {
                     # Share size calculation (only if enabled)
                     if [ "$SHARE_CALCULATION" = "yes" ]; then
                         # Try ZFS dataset first
-                        if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
+                        CACHESHARERESERVEDSPACE=""
+                        if is_zfs_pool "$PRIMARYSTORAGENAME"; then
                             mvlogger "Calculating zfs share usage..."
                             # if error on command then share can be a folder instead dataset
                             if ! CACHESHARERESERVEDSPACE=$(zfs list -Hpo used "$PRIMARYSTORAGENAME/$SHARENAME"); then
                                 mvlogger "Warning: Share is currently a folder. Convert it to a dataset for better performance."
-                                mvlogger "Calculating share usage... (can take a moment)"
-                                CACHESHARERESERVEDSPACE=$(du -sh "$SHAREPATH" | awk '{print $1}' | human_to_bytes)
+                                CACHESHARERESERVEDSPACE=""
                             fi
-                        else
+                        fi
+                        if [ -z "$CACHESHARERESERVEDSPACE" ]; then
                             mvlogger "Calculating share usage... (can take a moment)"
-                            CACHESHARERESERVEDSPACE=$(du -sh "$SHAREPATH" | awk '{print $1}' | human_to_bytes)
+                            if ! CACHESHARERESERVEDSPACE=$(du_total_bytes -s "$SHAREPATH"); then
+                                mvlogger "Error calculating size for $SHAREPATH"
+                                CACHESHARERESERVEDSPACE=0
+                            fi
                         fi
                     else
                         mvlogger "Share size calculation disabled for this share."
@@ -1335,7 +1383,12 @@ createFilteredFilelist() {
         if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && { [ "$SHAREUSECACHE" = "prefer" ] || [ "$SHAREUSECACHE" = "yes" ]; } && [ "$IGNOREHIDDENFILES" == "yes" ]; then
             mvlogger "Skipping Hidden Files. File size are taken into account in the calculation of the threshold"
             FINDSTR="$FINDSTR -not -path '*/\.*'"
-            HIDDENFILES_RESERVED_SPACE=$(find "/mnt/$PRIMARYSTORAGENAME/$SHARENAME" -type f -name '.*' -print0 | du -ch --files0-from=- | awk '/total$/ {print $1}' | human_to_bytes)
+            # pipefail: a part-way find still hands du a valid list. du_total_bytes
+            # reports exact bytes, where the fork's du -ch | human_to_bytes rounded.
+            if ! HIDDENFILES_RESERVED_SPACE=$(set -o pipefail; find "/mnt/$PRIMARYSTORAGENAME/$SHARENAME" -type f -name '.*' -print0 | du_total_bytes --files0-from=-); then
+                mvlogger "Error calculating size for hidden files in ${SHAREPATH}"
+                HIDDENFILES_RESERVED_SPACE=0
+            fi
             echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$POOLBYTEUSED|$HIDDENFILES_RESERVED_SPACE|0|0|0|f|0|${SHAREPATH}/ hidden files" >>"$FILTERED_FILELIST"
             mvlogger "    Hidden files are using $(bytes_to_human "$HIDDENFILES_RESERVED_SPACE")"
         fi
@@ -1346,7 +1399,13 @@ createFilteredFilelist() {
             mvlogger "Skip Folder List Path: ${SKIPFILESPATH}"
 
             while IFS= read -r folder; do
-                FINDSTR+=" -not -path \"$folder\""
+                # Route through escape_find_path like upstream's parallel loops do.
+                # This fork-only block had no upstream counterpart, so git had nothing to
+                # conflict against and it stayed unescaped -- it is the ONLY exclusion for
+                # cache:only shares and above the move-all threshold, and it silently
+                # failed on any folder containing '['.
+                escape_find_path "$folder"
+                FINDSTR+=" -not -path \"$FIND_PATH_ESC\""
             done <<<"$SKIPFOLDERSLIST"
         fi
 
@@ -1356,7 +1415,7 @@ createFilteredFilelist() {
         FINDSTR="$FINDSTR -not -name '.placeholder'" #do not move placeholders
 
         # Add files from ignore list
-        if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && { [ "$SHAREUSECACHE" = "prefer" ] || [ "$SHAREUSECACHE" = "yes" ]; } && [ -f "$SKIPFILESLIST" ] && grep -q "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" "$SKIPFILESLIST"; then
+        if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && { [ "$SHAREUSECACHE" = "prefer" ] || [ "$SHAREUSECACHE" = "yes" ]; } && [ -f "$SKIPFILESLIST" ] && [ -n "$(skiplist_share_lines "$PRIMARYSTORAGENAME" "$SHARENAME" "$SKIPFILESLIST")" ]; then
             mvlogger "Skipping Files from List. File size are taken into account in the calculation of the threshold"
             mvlogger "List Path: ${SKIPFILESLIST}:"
 
@@ -1370,6 +1429,7 @@ createFilteredFilelist() {
             fi
 
             TOTAL_SKIPPED_PATH_RESERVED_SPACE=0
+            SKIPPED_MEASURE_PATHS=()
             while IFS= read -r skipped_path; do
 
                 # Check if the last path component contains a wildcard pattern
@@ -1377,12 +1437,14 @@ createFilteredFilelist() {
                 if [[ "$lastcomponent" == *"*"* ]]; then
                     mvDebuglogger "${skipped_path} - is a Wildcard Pattern" "Skipped Path"
                     mvlogger "Skipping wildcard pattern: ${skipped_path} (size not tracked)"
-                    FINDSTR="$FINDSTR -not -path \"${skipped_path//[/\\[}\"" # fixed when folder contain '['
+                    # escape_find_path is a strict superset of the fork's inline
+                    # ${skipped_path//[/\\[} -- it escapes backslashes as well as '['.
+                    escape_find_path "$skipped_path"
+                    FINDSTR="$FINDSTR -not -path \"$FIND_PATH_ESC\""
                     echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$POOLBYTEUSED|0|0|0|0|f|0|${skipped_path}" >>"$FILTERED_FILELIST"
                     continue
                 fi
 
-                SKIPPED_PATH_RESERVED_SPACE=""
                 # Remove potential trailing /, *, /* characters from the skipped_path
                 skipped_path="${skipped_path%"${skipped_path##*[!/*]}"}"
                 #skipped_path="${skipped_path%/}" # Remove potential trailing slash
@@ -1390,10 +1452,16 @@ createFilteredFilelist() {
 
                 if [[ -d "${skipped_path}" || -f "${skipped_path}" ]]; then
                     mvDebuglogger "${skipped_path} - exists" "Skipped Path"
-                    SKIPPED_PATH_RESERVED_SPACE="$(du -sh "${skipped_path}" | awk '{print $1}' | human_to_bytes)"
+                    # Measured after the loop in a single du. du de-duplicates inodes
+                    # only within one invocation, so a per-path call counts a hardlinked
+                    # or nested entry once per listed path it is reachable from.
+                    SKIPPED_MEASURE_PATHS+=("${skipped_path}")
 
                     if [[ -d "${skipped_path}" ]]; then
                         mvDebuglogger "${skipped_path} - is a Folder" "Skipped Path"
+                        # -path "dir/*" matches the contents only, never the dir node
+                        escape_find_path "$skipped_path"
+                        FINDSTR="$FINDSTR -not -path \"$FIND_PATH_ESC\""
                         # Add /* at the end for better reading in Mover_action file
                         skipped_path="${skipped_path}/*"
                         filetype="d"
@@ -1402,20 +1470,32 @@ createFilteredFilelist() {
                         filetype="f"
                     fi
 
-                    FINDSTR="$FINDSTR -not -path \"${skipped_path//[/\\[}\"" # fixed when folder contain '['
+                    escape_find_path "$skipped_path"
+                    FINDSTR="$FINDSTR -not -path \"$FIND_PATH_ESC\""
                 else
                     mvDebuglogger "${skipped_path} - does not exist?" "Skipped Path"
                     continue
                 fi
 
-                if [ -n "$SKIPPED_PATH_RESERVED_SPACE" ]; then
-                    echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$POOLBYTEUSED|$SKIPPED_PATH_RESERVED_SPACE|0|0|0|$filetype|0|${skipped_path}" >>"$FILTERED_FILELIST"
-                    TOTAL_SKIPPED_PATH_RESERVED_SPACE=$((TOTAL_SKIPPED_PATH_RESERVED_SPACE + SKIPPED_PATH_RESERVED_SPACE))
+                # Exclusion-only row. The size for the whole list is carried by the
+                # aggregate row below, so these rows cannot double-count in the projected
+                # pool usage. Upstream deleted the per-path SKIPPED_PATH_RESERVED_SPACE
+                # assignment with no marker; keeping the fork's reader of it would test an
+                # unset variable every iteration and write zero skipped rows.
+                echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$POOLBYTEUSED|0|0|0|0|$filetype|0|${skipped_path}" >>"$FILTERED_FILELIST"
+            done <<<"$(skiplist_share_lines "$PRIMARYSTORAGENAME" "$SHARENAME" "$SKIPFILESLIST")"
+
+            if [ ${#SKIPPED_MEASURE_PATHS[@]} -gt 0 ]; then
+                # du exits nonzero on a partial read while still printing a total
+                if SKIPPED_PATHS_DU="$(printf '%s\0' "${SKIPPED_MEASURE_PATHS[@]}" | du -sc --block-size=1 --files0-from=- 2>/dev/null)"; then
+                    TOTAL_SKIPPED_PATH_RESERVED_SPACE=$(tail -n1 <<<"$SKIPPED_PATHS_DU" | cut -f1)
                 else
-                    mvlogger "Error calculating size for $skipped_path"
+                    mvlogger "Error calculating size for ${SKIPFILESLIST}"
+                    TOTAL_SKIPPED_PATH_RESERVED_SPACE=0
                 fi
-            done <<<"$(grep "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" "${SKIPFILESLIST}")" # trailing / and * are stripped in-loop above
-            mvlogger "    Ignored files are using $(bytes_to_human $TOTAL_SKIPPED_PATH_RESERVED_SPACE)"
+                echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$POOLBYTEUSED|$TOTAL_SKIPPED_PATH_RESERVED_SPACE|0|0|0|f|0|${SHAREPATH}/ ignored files" >>"$FILTERED_FILELIST"
+            fi
+            mvlogger "    Ignored files are using $(bytes_to_human "$TOTAL_SKIPPED_PATH_RESERVED_SPACE")"
         fi
 
         #Add Skipfilelist to find string
@@ -1423,10 +1503,16 @@ createFilteredFilelist() {
         if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && { [ "$SHAREUSECACHE" = "prefer" ] || [ "$SHAREUSECACHE" = "yes" ]; } && { [ -n "$SKIPFILETYPES" ] || [ -n "$globalSkipFileTypes" ]; }; then
             mvlogger "Skipping Filetypes from List. File sizes are taken into account for the calculation of the threshold"
             for ext in $([ $overrideFlag = 1 ] && echo -n "$SKIPFILETYPES") $(echo -n "$globalSkipFileTypes"); do
-                # Escape '!' character in the extension (fork: '!' broke FINDSTR)
+                # Escape '!' character in the extension (fork: '!' broke FINDSTR).
+                # Only ONE -not -name is appended -- upstream's unescaped copy is dropped,
+                # keeping both would exclude every extension twice.
                 escaped_ext=$(echo "$ext" | sed 's/!/\\!/g')
                 FINDSTR="$FINDSTR -not -name '*.$escaped_ext'"
-                if SKIPPED_FILETYPES_RESERVED_SPACE="$(find "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" -type f -name '*.$ext' -print0 | xargs -0 du -sh | awk '{print $1}' | human_to_bytes | awk '{ sum += $1 } END { print sum }')"; then
+                # Upstream's measurement, which is a real fix: the fork had -name '*.$ext'
+                # inside "$( ... )", so $ext never expanded, find matched nothing, and
+                # du -sh with empty input fell back to measuring '.'.
+                if SKIPPED_FILETYPES_DU="$(set -o pipefail; find "/mnt/${PRIMARYSTORAGENAME}/${SHARENAME}" -type f -name "*.$ext" -print0 | du -c --block-size=1 --files0-from=- 2>/dev/null)" &&
+                    SKIPPED_FILETYPES_RESERVED_SPACE=$(tail -n1 <<<"$SKIPPED_FILETYPES_DU" | cut -f1) && [ -n "$SKIPPED_FILETYPES_RESERVED_SPACE" ]; then
                     echo "$PRIMARYSTORAGENAME|$SECONDARYSTORAGENAME|$SHARENAME|skipped|9999999999|$PRIMARYSIZETHRESH|$POOLBYTEUSED|$SKIPPED_FILETYPES_RESERVED_SPACE|0|0|0|f|0|$SHAREPATH/**/*.$ext" >>"$FILTERED_FILELIST"
                     TOTAL_SKIPPED_FILETYPES_RESERVED_SPACE=$((TOTAL_SKIPPED_FILETYPES_RESERVED_SPACE + SKIPPED_FILETYPES_RESERVED_SPACE))
                 else
@@ -1526,7 +1612,7 @@ createFilteredFilelist() {
         fi
 
         # Get size with du if on zfs mountpoint with compression enabled
-        #        if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME" && [ "$(zfs get compression -Hpo value "$PRIMARYSTORAGENAME/$SHARENAME")" == "on" ]; then
+        #        if is_zfs_pool "$PRIMARYSTORAGENAME" && [ "$(zfs get compression -Hpo value "$PRIMARYSTORAGENAME/$SHARENAME")" == "on" ]; then
         #            FINDSTR="$FINDSTR cmd = \"du -sh \\\"\"\$6\"\\\" | numfmt --from=iec\";
         #                cmd | getline result;
         #                close(cmd);
@@ -1566,12 +1652,15 @@ createFilteredFilelist() {
     # Sort by PRIMARYSTORAGENAME, shareusecache, modification time (newest first)
     # and inode (field 11 since upstream inserted POOLUSED), /mnt/disk last.
     #
-    # Deliberately NOT sorted by HASPRIORITY (field 13). decideMoveActions walks
-    # this list accumulating pool_sums and keeps rows until the threshold is
-    # reached, then moves the rest -- so the head is KEPT and the tail is MOVED.
-    # Sorting priority files to the head would pin them on the cache instead of
-    # sending them to their mapped disks. Priority routing is applied per file
-    # from the path and size in decideMoveActions, and does not depend on order.
+    # Deliberately NOT sorted by HASPRIORITY (field 13), and still deliberate after
+    # the 2026.09 merge -- but for a different reason than before. The gate is no
+    # longer the pool_sums accumulator (nothing reads it now; see decideMoveActions,
+    # where the decisions test remaining_bytes_used = pool_bytes_used + net_delta).
+    # net_delta is signed and decremented per planned move, so rows are evaluated in
+    # list order until projected usage drops below the threshold. Sorting priority
+    # files to the head would therefore move them FIRST rather than pin them on the
+    # cache -- still not what we want, since routing should not depend on order.
+    # Priority routing is applied per row from the path and size in decideMoveActions.
     sort -t '|' -k1,1 -k4,4 -k5,5nr -k11,11 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
     # Need to remove duplicate (cache and array)
     if grep -q "/mnt/disk" "$FILTERED_FILELIST"; then
@@ -1630,6 +1719,13 @@ createFilteredFilelist() {
         sort -t '|' -k1,1 -k4,4 -k5,5nr -k11,11 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
         rm "$tempfile1" "$tempfile2"
     fi
+
+    # cache:yes is walked oldest-first so projected pool usage sheds the oldest files;
+    # every other mode keeps newest-first (cache:prefer primes the newest)
+    reorderfile=$(mktemp)
+    awk -F'|' 'NR==1 || $4!="yes"' "$FILTERED_FILELIST" >"$reorderfile"
+    awk -F'|' 'NR>1 && $4=="yes"' "$FILTERED_FILELIST" | sort -t '|' -k1,1 -k5,5n -k11,11 >>"$reorderfile"
+    mv -f "$reorderfile" "$FILTERED_FILELIST"
 }
 
 decideMoveActions() {
@@ -1779,7 +1875,7 @@ decideMoveActions() {
             # Print new header
             printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
             "PRIMARYSTORAGENAME","SHARENAME","SHAREUSECACHE","MODIFYTIME",
-            "FILESIZE","POOLSUM","THRESHOLD","POOLUSED","NBLINKS","INODE",
+            "FILESIZE","POOLSUM","THRESHOLD","PROJECTED","NBLINKS","INODE",
             "ACTION","FROM","TO","FILETYPE","FILEPATH"
         }
 
@@ -1818,19 +1914,10 @@ decideMoveActions() {
             # Actual pool usage before mover starts (from POOLUSED)
             pool_bytes_used[$1] = $7
 
-            # Projected pool usage after this file is processed
-            if ($4 == "yes") {
-                # yes = mover empties cache → subtract cumulative moved size
-                remaining_bytes_used[$1] = pool_bytes_used[$1] - pool_sums[$1]
-            }
-            else if ($4 == "prefer") {
-                # prefer = mover fills cache → add cumulative moved size
-                remaining_bytes_used[$1] = pool_bytes_used[$1] + pool_sums[$1]
-            }
-            else {
-                # others (only/skipped) = no movement → usage unchanged
-                remaining_bytes_used[$1] = pool_bytes_used[$1]
-            }
+            # Projected pool usage from the moves planned so far. net_delta is signed -
+            # arrivals on the primary add, departures subtract - so a pool carrying both
+            # cache:yes and cache:prefer shares stays consistent across both.
+            remaining_bytes_used[$1] = pool_bytes_used[$1] + net_delta[$1]
 
             ### Check if share has Sync override ###
             # Set current sharename
@@ -1895,7 +1982,14 @@ decideMoveActions() {
                 # Update pool statistics and set destination if moving the file
                 if (action == "move from primary") {
                     source = storage_path
+                    # Fork routing. The upstream line "destination = /mnt/ $2" is already
+                    # the fallback argument of this call, so keeping it would clobber the
+                    # routed disk. The net_delta decrement below is upstream projected-usage
+                    # accounting and is the ONLY decrement in the file -- without it the
+                    # threshold gate never closes.
+                    # (No apostrophes here: this awk body is a single-quoted shell string.)
                     destination = getPriorityDestination($14, $8, "/mnt/" $2)
+                    net_delta[$1] -= $8
                     if ($12 == "d") {
                         pool_stats[$1]["folders_from_primary"] += 1
                     } else {
@@ -1917,6 +2011,7 @@ decideMoveActions() {
                     if (action == "move from secondary") {
                         source = storage_path
                         destination = "/mnt/" $1
+                        net_delta[$1] += $8
                         if (SYNCHRONIZECACHE == "yes" && ($4 != "only" && $4 != "skipped")) {
                             action = "sync from secondary"
                         }
@@ -1928,11 +2023,13 @@ decideMoveActions() {
                         pool_stats[$1]["total_size_from_secondary"] += $8
                     }
                 } else {
-                    if (REBALANCESHARES == "yes") {
+                    if (REBALANCESHARES == "yes" && $4 != "skipped") {
                         action = ($4 == "only" || ($4 == "prefer" && remaining_bytes_used[$1] <= $6)) ? "move unattended to primary" : "move unattended to secondary"
                         if (action == "move unattended to primary" && SYNCHRONIZECACHE == "yes" && $4 != "only" ) {
                             source = storage_path
                             destination = "/mnt/" $1
+                            # the follow-up is a sync, which keeps the file on the primary
+                            net_delta[$1] += $8
                             if ($12 == "d") {
                                 pool_stats[$1]["folders_from_unattended"] += 1
                             } else {
@@ -1948,6 +2045,7 @@ decideMoveActions() {
                             if (action == "move unattended to primary") {
                                 source = storage_path
                                 destination = "/mnt/" $1
+                                net_delta[$1] += $8
                             } else {
                                 action = "move unattended to secondary"
                                 source = storage_path
@@ -2093,7 +2191,7 @@ processTheMoves() {
         [ "$TESTMODE" != "yes" ] && /usr/local/sbin/mdcmd set md_write_method 1
     fi
     # MOVER_ACTIONLIST header:
-    # PRIMARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFYTIME|FILESIZE|POOLSUM|THRESHOLD|POOLUSED|NBLINKS|INODE|ACTION|FROM|TO|FILETYPE|FILEPATH
+    # PRIMARYSTORAGENAME|SHARENAME|SHAREUSECACHE|MODIFYTIME|FILESIZE|POOLSUM|THRESHOLD|PROJECTED|NBLINKS|INODE|ACTION|FROM|TO|FILETYPE|FILEPATH
 
     #Initialise stats:
     REMAINING_ARRAY_SIZE=$TOTALSECONDARYSIZE
@@ -2124,7 +2222,7 @@ processTheMoves() {
     # Ignore "grep '|keep on primary|' '$MOVER_ACTIONLIST'" action because it's not an action
 
     for GREP_CMD in "${GREP_CMDS[@]}"; do
-        while IFS="|" read -r PRIMARYSTORAGENAME SHARENAME SHAREUSECACHE MODIFYTIME FILESIZE POOLSUM THRESHOLD POOLUSED NBLINKS INODE ACTION SOURCE DESTINATION FILETYPE FILEPATH; do
+        while IFS="|" read -r PRIMARYSTORAGENAME SHARENAME SHAREUSECACHE MODIFYTIME FILESIZE POOLSUM THRESHOLD PROJECTED NBLINKS INODE ACTION SOURCE DESTINATION FILETYPE FILEPATH; do
             if [ -e $SOFTSTOPFILE ]; then
                 [ $SOFTSTOP_ACK = true ] || mvlogger "Soft Stopping requested" && SOFTSTOP_ACK=true
                 return
@@ -2146,7 +2244,7 @@ processTheMoves() {
             if [[ "$FILETYPE" == "d" && "$ACTION" =~ "move" ]]; then
                 # If the directory is listed in the skiplist, skip it
                 if [[ -n "$SKIPFILESLIST" && -f "$SKIPFILESLIST" ]] && grep -q "${SOURCE}/${FILEPATH}" "$SKIPFILESLIST"; then
-                    mvlogger "Skipping empty folder \"${SOURCE}/${FILEPATH}\" as it is listed in the skip list."
+                    mvlogger "Skipping empty folder $(qp "${SOURCE}/${FILEPATH}") as it is listed in the skip list."
                     continue # do not move this folder
                 fi
             fi
@@ -2165,7 +2263,7 @@ processTheMoves() {
             # Check File by validate function and skip if error
             if [ "$VALIDATE_FILENAMES" = "yes" ]; then
                 if ! validate_filename "$(basename "$FILEPATH")"; then
-                    mvlogger "Error: Invalid filename path: '$FILEPATH'. Please either change the filename to valid or disable the 'Validate input filenames' option." "failure"
+                    mvlogger "Error: Invalid filename path: $(qp "$SOURCE/$FILEPATH"). Please either change the filename to valid or disable the 'Validate input filenames' option." "failure"
                     continue
                 #else
                 #    mvlogger "Valid filename"
@@ -2180,7 +2278,7 @@ processTheMoves() {
             # SYNCED_FILES is a display/count string only, derived from the array so
             # the extraction pipeline above runs only once per file.
             SYNCED_FILES=""
-            [[ ${#SYNCED_FILES_ARR[@]} -gt 0 ]] && printf -v SYNCED_FILES '"%s" ' "${SYNCED_FILES_ARR[@]}"
+            for f in "${SYNCED_FILES_ARR[@]}"; do SYNCED_FILES+="$(qp "$f") "; done
             GUI_CURRENT_FILE=$SYNCED_FILES
 
             # Check if list is complete (array length is exact, unlike parsing the string)
@@ -2194,14 +2292,14 @@ processTheMoves() {
             if [[ "$ACTION" =~ "move" ]]; then
                 # Some verbosity
                 GUI_ACTION="Moving to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
-                mvlogger "Moving $SYNCED_FILES to  $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
+                mvlogger "Moving $SYNCED_FILES to  $(qp "$DESTINATION/") $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
                 rsync_action="Move"
                 # Finalize RSYNC_CMD
                 RSYNC_CMD+=(--remove-source-files)
             elif [[ "$ACTION" =~ "sync" ]]; then
                 # Some verbosity
                 GUI_ACTION="Synchronizing to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
-                mvlogger "Synchronizing  $SYNCED_FILES to  $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
+                mvlogger "Synchronizing  $SYNCED_FILES to  $(qp "$DESTINATION/") $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
                 rsync_action="Sync"
             fi
 
@@ -2218,7 +2316,7 @@ processTheMoves() {
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would move using Unraid move utility"
                 else
-                    mvDebuglogger "Move cmd: move, Move $filetype: $SOURCE/$FILEPATH, Dest: $DESTINATION/" "Move Action"
+                    mvDebuglogger "Move cmd: move, Move $filetype: $(qp "$SOURCE/$FILEPATH"), Dest: $(qp "$DESTINATION/")" "Move Action"
                     # Perform unraid binary move.
                     find "$SOURCE/$FILEPATH" | /usr/libexec/unraid/move "$DEBUGGING" >>"$MOVER_DEBUG_LOG" 2>&1
                     move_exit_code=$?
@@ -2232,7 +2330,11 @@ processTheMoves() {
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would $rsync_action using rsync utility"
                 else
-                    mvDebuglogger "Rsync cmd: ${RSYNC_CMD[*]}, $rsync_action $filetype: $SYNCED_FILES, Dest: $DESTINATION/" "$rsync_action Action"
+                    # one quoted token per argv element, like SYNCED_FILES above: [*] joins the
+                    # paths with spaces, and the anonymiser cannot tell where one ends
+                    RSYNC_CMD_LOG=""
+                    for a in "${RSYNC_CMD[@]}"; do RSYNC_CMD_LOG+="$(qp "$a") "; done
+                    mvDebuglogger "Rsync cmd: $RSYNC_CMD_LOG, $rsync_action $filetype: $SYNCED_FILES, Dest: $(qp "$DESTINATION/")" "$rsync_action Action"
                     # Perform rsync. relative paths and hardlinks
                     if [ ${#SYNCED_FILES_ARR[@]} -gt 0 ]; then
                         "${RSYNC_CMD[@]}" "${SYNCED_FILES_ARR[@]}" "$DESTINATION/"
@@ -2242,7 +2344,7 @@ processTheMoves() {
                             mvlogger "Rsync failed for $FILEPATH (exit code: $rsync_exit_code)"
                         fi
                     else
-                        mvlogger "Error: No files found to move for $FILEPATH" "failure"
+                        mvlogger "Error: No files found to move for $(qp "$SOURCE/$FILEPATH")" "failure"
                     fi
                 fi
             fi
@@ -2256,7 +2358,7 @@ processTheMoves() {
                     # Collapse the rsync --relative marker ("/./" -> "/")
                     FILE="${FILE//\/.\//\/}"
                     DIR=$(dirname "$FILE")
-                    mvDebuglogger "Current file: $FILE, Current folder: $DIR, Previous folder: $LAST_DIR, Previous count: $LAST_COUNT" "Clean Folder - Start Loop"
+                    mvDebuglogger "Current file: $(qp "$FILE"), Current folder: $(qp "$DIR"), Previous folder: $(qp "$LAST_DIR"), Previous count: $LAST_COUNT" "Clean Folder - Start Loop"
 
                     if [ -e "${DIR}/.placeholder" ]; then
                         count=".placeholder"
@@ -2312,7 +2414,7 @@ processTheMoves() {
                     # If no files in share
                     if [ "${share_file_count}" -eq 0 ]; then
                         # Check if mount point is ZFS
-                        if is_zfs_mountpoint_fstype "/mnt/$PRIMARYSTORAGENAME"; then
+                        if is_zfs_pool "$PRIMARYSTORAGENAME"; then
                             DATASET="${PRIMARYSTORAGENAME}/${SHARENAME}"
                             #echo "Checking if ZFS dataset [${DATASET}] is completely empty..."
                             # If ZFS dataset children size is zero and No ZFS dataset children exist
@@ -2358,9 +2460,9 @@ processTheMoves() {
                 if [ ! -d "$START_DIR" ]; then
                     START_DIR="$(dirname "${START_DIR}")"
                     if [ -d "$START_DIR" ]; then
-                        mvDebuglogger "Skipping cleanup: $START_DIR no longer exists, using upper folder: $(dirname "${START_DIR}")" "Clean Empty Moved Folder"
+                        mvDebuglogger "Skipping cleanup: $(qp "$START_DIR") no longer exists, using upper folder: $(qp "$(dirname "${START_DIR}")")" "Clean Empty Moved Folder"
                     else
-                        mvDebuglogger "Skipping cleanup: $START_DIR no longer exists" "Clean Empty Moved Folder"
+                        mvDebuglogger "Skipping cleanup: $(qp "$START_DIR") no longer exists" "Clean Empty Moved Folder"
                         continue
                     fi
                 fi
@@ -2440,7 +2542,7 @@ processTheMoves() {
                             file_count=$(find "$top_folder" -type f | wc -l)
                             dir_count=$(find "$top_folder" -mindepth 1 -type d | wc -l)
 
-                            mvDebuglogger "Top folder: $top_folder, share file(s): $file_count, share folder(s): $dir_count" "Clean Top Folder"
+                            mvDebuglogger "Top folder: $(qp "$top_folder"), share file(s): $file_count, share folder(s): $dir_count" "Clean Top Folder"
 
                             # Delete only if truly empty
                             if [ "$file_count" -eq 0 ] && [ "$dir_count" -eq 0 ]; then
@@ -2546,6 +2648,14 @@ processTheMoves() {
     fi
 }
 
+# The settings pages cannot offer this combination, so it only arrives by saving a
+# lower moving threshold while the old freeing value is still selected.
+warn_freeing_above_moving() {
+    if [ "$FREEINGPCTLIMIT" -gt "$MOVINGPCTTHRESHOLD" ]; then
+        mvlogger "Warning: Freeing threshold ($FREEINGPCTLIMIT%) is above the moving threshold ($MOVINGPCTTHRESHOLD%). The mover starts at $MOVINGPCTTHRESHOLD% and stops at $FREEINGPCTLIMIT%, so nothing is moved while the pool sits between them. The settings page will show the freeing threshold as $MOVINGPCTTHRESHOLD% until it is saved again."
+    fi
+}
+
 start() {
 
     # Do not start if already running
@@ -2620,10 +2730,12 @@ start() {
         mvlogger "Warning: Moving thresholds are equal. No action will be taken because the thresholds do not provide a gap."
     fi
 
-    # If $MOVINGPCTTHRESHOLD - $FREEINGPCTLIMIT <= 5, log a warning message indicating that the mover will possibly not move due to the thresholds low gap beetween.
+    # If the gap is exactly 5, the smallest the settings page can offer, warn that it may not be enough.
     if [ "$MOVINGPCTTHRESHOLD" -eq "$((FREEINGPCTLIMIT + 5))" ]; then
         mvlogger "Warning: The mover will possibly not proceed due to the low gap between thresholds."
     fi
+
+    warn_freeing_above_moving
 
     # Only start if cache enabled and present
     if ! grep -qs 'shareCacheEnabled="yes"' $UNRAIDCFGFILE && [ $(ls /boot/config/pools/*.cfg | wc -l) -lt 2 ]; then
@@ -2637,10 +2749,10 @@ start() {
         exit 5
     fi
 
-    #Delete helper files over 5 days old.
+    #Delete list files over $LISTFILESAGE days old.
     find "${LOGFOLDER}"/ca.mover.tuning/* -daystart -mtime +"$LISTFILESAGE" -name '*.list' -delete
 
-    #Delete Mover Log and txt files over 10 days old.
+    #Delete Mover Log and txt files over $LOGFILESAGE days old.
     find "${LOGFOLDER}"/ca.mover.tuning/* -daystart -mtime +"$LOGFILESAGE" \( -name '*.log' -o -name '*.txt' \) -delete
 
     #Delete Mover List files with 0 lines.
