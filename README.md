@@ -35,6 +35,12 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.09.10b
+    - fix: Updating the plugin could abort halfway and leave the old version installed while the Plugins page reported it as up to date. The check for a running mover matched the plugin installer's own process, so an update could cancel itself, and because the version number is recorded before that check runs there was no way to retry from the UI. The check now uses the mover's own run-state file, and also clears a stale file left behind by a stopped run.
+    - fix: The diagnostics package no longer blanks out Disk Priority Mappings and the Ignore List. Both settings pack several paths into one value, and the anonymizer treated the whole value as a single path, erasing the separators and the disk names along with it. Folder names are still hidden; the structure and the target disks are now readable.
+    - fix: The pipe character is no longer treated as an invalid filename character by default. It was only unsafe because such names were cut short in the internal file lists, which was fixed in 2026.09.10a. Servers that already have a saved invalid-character list keep it unchanged.
+
+
 - 2026.09.10a
     - fix: Files whose name contains a pipe character were never moved. The file list is pipe-delimited, so such a name was cut short at the first pipe and the mover then asked rsync to move a path that does not exist. On the maintainer's server this silently stranded 134 files on the cache, failing the same way on every run. Paths are now rejoined before use, so these files move normally and keep their names.
     - fix: The Ignore List and Disk Priority Mappings now match correctly against paths containing a pipe, including a pipe in a folder name. Previously such a path was compared only up to the first pipe, so an ignore entry could fail to match and a priority mapping could route the file to the wrong disk.
