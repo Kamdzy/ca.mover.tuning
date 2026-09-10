@@ -35,6 +35,15 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.09.10a
+    - fix: Files whose name contains a pipe character were never moved. The file list is pipe-delimited, so such a name was cut short at the first pipe and the mover then asked rsync to move a path that does not exist. On the maintainer's server this silently stranded 134 files on the cache, failing the same way on every run. Paths are now rejoined before use, so these files move normally and keep their names.
+    - fix: The Ignore List and Disk Priority Mappings now match correctly against paths containing a pipe, including a pipe in a folder name. Previously such a path was compared only up to the first pipe, so an ignore entry could fail to match and a priority mapping could route the file to the wrong disk.
+    - fix: The last-access and last-change time lookups read the correct file for these names. Previously they read the containing folder, and that timestamp then fed the age filter and the processing order.
+    - fix: A file whose name begins with a pipe truncated to its parent folder. With Test Mode off, that could move the entire share and delete the originals, ignoring the Ignore List and the thresholds. No such file existed on the maintainer's server, so this never triggered, but it is now impossible.
+    - fix: Move selection now matches the action column exactly instead of searching the whole line, so a file whose name happens to contain an action phrase cannot be picked up for the wrong operation.
+    - note: Files with a pipe in the name are still rejected when "Validate filenames" is enabled, because the pipe is in the default invalid-character list. That list is editable in the plugin settings.
+
+
 - 2026.09.10
     - new: Merged upstream masterwishx 2026.09.07 (89 commits). Mover decisions now track projected pool usage as a signed running total, so each planned move reduces the projected usage that later files are judged against. Threshold evaluation was corrected for all share modes. **_(masterwishx)_**
     - note: Because of that redesign, the sizes reserved by skipped paths, skipped file types, hidden files and the Ignore List no longer hold the mover back from moving other files. On the same input this moves more per run than 2026.08.29 did. Raise the Freeing Threshold if you want the mover to stop earlier.
