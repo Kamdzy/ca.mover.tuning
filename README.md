@@ -35,6 +35,18 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.09.10
+    - new: Merged upstream masterwishx 2026.09.07 (89 commits). Mover decisions now track projected pool usage as a signed running total, so each planned move reduces the projected usage that later files are judged against. Threshold evaluation was corrected for all share modes. **_(masterwishx)_**
+    - note: Because of that redesign, the sizes reserved by skipped paths, skipped file types, hidden files and the Ignore List no longer hold the mover back from moving other files. On the same input this moves more per run than 2026.08.29 did. Raise the Freeing Threshold if you want the mover to stop earlier.
+    - new: Skip lists now match share names exactly, so a share named "media" no longer also matches "media2", and skip lists saved with Windows line endings are read correctly. **_(masterwishx, thanks to chodeus)_**
+    - new: Skipped and ignored sizes are measured in exact bytes in a single pass, instead of rounded per-path totals.
+    - fix: The Skip Folder List did not escape square brackets, so a folder such as "My [Series]" was never excluded. This list is the only exclusion that applies to cache:only shares and to runs above the Move All threshold.
+    - fix: The Skip Folder List also ignored skip files saved with Windows line endings, which left it silently empty.
+    - fix: Skip File Types measured the wrong thing. The size lookup never expanded the extension, so it measured the whole share instead of the matching files, and still escapes "!" correctly.
+    - fix: The forced move schedule still calls the original Unraid mover (mover.old). Upstream now points it at /usr/local/sbin/mover, which on this build is the plugin itself.
+    - fix: Disk Priority Mappings and the Ignore List were re-verified against live data after the merge; behaviour is unchanged.
+
+
 - 2026.08.29
     - new: Merged upstream masterwishx 2026.08.29. Move decisions now use projected pool usage, tracked per file through filtering, planning and execution, instead of raw cumulative file size. Threshold evaluation was corrected for all share modes (yes, prefer and only). **_(masterwishx)_**
     - fix: Disk Priority Mappings and the Ignore List were rebuilt on upstream's new file list layout, which adds a pool-usage column and moves the file path to the end of each row. Behaviour is unchanged; both were re-verified against live data.
