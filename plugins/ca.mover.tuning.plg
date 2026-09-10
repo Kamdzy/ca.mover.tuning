@@ -744,17 +744,28 @@ cp "$PLUGIN_MOVER" "$MOVER_PATH"
 echo "Fixing permissions for mover"
 chmod +x "$MOVER_PATH"
 
-# Clean leftover run-state files only if age_mover is NOT running
-if ! pgrep -f "age_mover" >/dev/null 2>&amp;1; then
+# Clean leftover run-state files only if age_mover is NOT running.
+#
+# Deliberately NOT `pgrep -f "age_mover"`: -f matches the whole command line, so the
+# plugin manager's own installer (/bin/bash /tmp/inlineN-ca.mover.tuning.sh, and any
+# shell with the path in argv) satisfies it and this aborts its own install. That
+# happened three times in a row on a box with a 15-minute mover trigger, and because
+# the plugin manager stamps the new version BEFORE running this, the result is a
+# silent split state: the UI reports up-to-date while the old code is still on disk,
+# and re-clicking Update does nothing because there is nothing left to offer.
+#
+# The pid file is what age_mover's own `status` uses. kill -0 also clears a stale
+# file left by a killed run, which is the behaviour we want here anyway.
+if [[ -s /var/run/mover.pid ]] &amp;&amp; kill -0 "$(cat /var/run/mover.pid 2>/dev/null)" 2>/dev/null; then
+  echo "WARNING: age_mover is still running - aborting plugin removal."
+  exit 1
+else
   echo "Cleaning leftover lock/stop files..."
   for file in mover.pid moversoft.stop; do
     if [[ -e "/var/run/$file" ]]; then
       rm -f "/var/run/$file"
     fi
   done
-else
-  echo "WARNING: age_mover is still running - aborting plugin removal."
-  exit 1
 fi
 
 # Renaming mover.cron.disabled to mover.cron if exists (from old cron fix)
@@ -804,17 +815,28 @@ The 'remove' script.
 -->
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
-# Clean leftover run-state files only if age_mover is NOT running
-if ! pgrep -f "age_mover" >/dev/null 2>&amp;1; then
+# Clean leftover run-state files only if age_mover is NOT running.
+#
+# Deliberately NOT `pgrep -f "age_mover"`: -f matches the whole command line, so the
+# plugin manager's own installer (/bin/bash /tmp/inlineN-ca.mover.tuning.sh, and any
+# shell with the path in argv) satisfies it and this aborts its own install. That
+# happened three times in a row on a box with a 15-minute mover trigger, and because
+# the plugin manager stamps the new version BEFORE running this, the result is a
+# silent split state: the UI reports up-to-date while the old code is still on disk,
+# and re-clicking Update does nothing because there is nothing left to offer.
+#
+# The pid file is what age_mover's own `status` uses. kill -0 also clears a stale
+# file left by a killed run, which is the behaviour we want here anyway.
+if [[ -s /var/run/mover.pid ]] &amp;&amp; kill -0 "$(cat /var/run/mover.pid 2>/dev/null)" 2>/dev/null; then
+  echo "WARNING: age_mover is still running - aborting plugin removal."
+  exit 1
+else
   echo "Cleaning leftover lock/stop files..."
   for file in mover.pid moversoft.stop; do
     if [[ -e "/var/run/$file" ]]; then
       rm -f "/var/run/$file"
     fi
   done
-else
-  echo "WARNING: age_mover is still running - aborting plugin removal."
-  exit 1
 fi
 
 # Restore original mover binaries if backups exist

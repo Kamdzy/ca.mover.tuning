@@ -49,3 +49,7 @@ Network Trash Folder
 Temporary Items
 .apdisk
 source/ca.mover.tuning/custom_pkg_build.sh
+
+# Release notes staged for the next pkg_build run. Fork-local: upstream tracks
+# this file, which makes it conflict on every merge and ship upstream notes as ours.
+.updates.txt

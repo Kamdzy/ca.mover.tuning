@@ -68,6 +68,24 @@ function mangle_path(p,   parts, n, i, out, abs, keep) {
     return out
 }
 
+# This fork packs SEVERAL paths into one config value: priorityMappings and
+# ignoreList are ":::"-delimited, and priorityMappings also carries a " -> disk1,disk2"
+# routing suffix. The free-text matcher below runs to the closing quote, so it hands
+# the whole value to mangle_path(), which then splits it on "/" and mangles the
+# separators and the disk names too - turning the two most diagnostic settings in a
+# debug package into a row of dashes. Split first, mangle each path, keep the structure.
+function mangle_value(v,   n, seg, i, out, arrow) {
+    n = split(v, seg, ":::")
+    out = ""
+    for (i = 1; i <= n; i++) {
+        arrow = index(seg[i], " -> ")
+        out = out (i > 1 ? ":::" : "") \
+              (arrow > 0 ? mangle_path(substr(seg[i], 1, arrow - 1)) substr(seg[i], arrow) \
+                         : mangle_path(seg[i]))
+    }
+    return out
+}
+
 BEGIN {
     FS = OFS = "|"
     split(POOLS, p, " ");  for (i in p) pool[p[i]] = 1
@@ -92,7 +110,7 @@ LIST && NF > 1 { $NF = mangle_path($NF); print; next }
         tok = substr(line, st, len); tail = ""
         # trailing blanks belong to the line, not the path
         if (match(tok, /[ \t]+$/)) { tail = substr(tok, RSTART); tok = substr(tok, 1, RSTART - 1) }
-        out = out substr(line, 1, st - 1) mangle_path(unescape(tok)) tail
+        out = out substr(line, 1, st - 1) mangle_value(unescape(tok)) tail
         line = substr(line, st + len)
     }
     print out line

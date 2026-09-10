@@ -70,7 +70,11 @@ overrideFlag=0
 UNRAID_MOVER_LOGLEVEL=0
 UNRAID_MOVER=0
 # PHP requires escaped quotes (" -> \") for text fields
-DEFAULT_INVALID_FILE_CHARS=('$' '/' '<' '>' ':' '\"' '|' '?' '*')
+# '|' is deliberately NOT here: it was only unsafe because the pipe-delimited file
+# lists truncated such a name, which is fixed (paths are rejoined from the trailing
+# fields now). Leaving it in would reject the very files that fix unblocked. Existing
+# installs keep whatever invalidFileChars they already wrote to their config.
+DEFAULT_INVALID_FILE_CHARS=('$' '/' '<' '>' ':' '\"' '?' '*')
 # Variables for counts when delete folders
 LAST_DIR=""
 LAST_COUNT=-1
