@@ -35,6 +35,17 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.09.19
+    - new: The plugin interface can now be translated, and a Russian translation is included (from upstream).
+    - new: Hardlinked files are handed to the Unraid move utility as a complete group, so a set of hardlinks is no longer skipped when only part of it was selected for one run.
+    - fix: Rows in the internal action list are now matched field by field. Previously a filename containing a pipe character could match a different row than its own, and in the case of a hardlinked file that could pass the safety check and act on the wrong list of names.
+    - fix: Duplicate files present on both the cache and the array were never being deduplicated. The check that detects them was reading the priority-mapping column instead of the file path, so it never matched and the whole deduplication step was skipped without any message.
+    - fix: Priority disk mappings, the ignore list and the duplicate check all read the file path from the correct column again. A mismatch here silently routed files by the wrong value.
+    - fix: A failed synchronisation no longer advances the last-sync date. Previously a sync that reported an error could still move the date forward, so the affected files were never reconsidered on later runs.
+    - fix: Names containing a line break are skipped rather than trusted, and paths passed to stat are quoted, so a name containing a quote character no longer breaks the age and access-time lookups.
+    - fix: File extensions in the Skip File Types field are escaped before use, so an extension containing a quote character can no longer break the file scan.
+
+
 - 2026.09.10b
     - fix: Updating the plugin could abort halfway and leave the old version installed while the Plugins page reported it as up to date. The check for a running mover matched the plugin installer's own process, so an update could cancel itself, and because the version number is recorded before that check runs there was no way to retry from the UI. The check now uses the mover's own run-state file, and also clears a stale file left behind by a stopped run.
     - fix: The diagnostics package no longer blanks out Disk Priority Mappings and the Ignore List. Both settings pack several paths into one value, and the anonymizer treated the whole value as a single path, erasing the separators and the disk names along with it. Folder names are still hidden; the structure and the target disks are now readable.
