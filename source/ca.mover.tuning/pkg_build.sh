@@ -10,6 +10,8 @@ plugin=$(basename "${DIR}")
 archive="$(dirname "$(dirname "${DIR}")")/archive"
 # $2 is argument addition to date (a,b,c)
 version=$(date +"%Y.%m.%d")${2:-}
+# a test build passes its own version (.github/workflows/pr-build.yml)
+version=${PKG_VERSION:-$version}
 # $1 Path to the plugin directory
 config_file="$1/$plugin/plugins/$plugin.plg"
 readme_file="$1/$plugin/README.md"

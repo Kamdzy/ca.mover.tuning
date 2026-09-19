@@ -4,7 +4,8 @@
 #      2018 - Andrew Zawadzki (parts of code from mover tuning package)
 #      2023 - hugenbd (parts of code from mover tuning package)
 #      2024 - R3yn4ld (parts of code from mover tuning package)
-#      2025-2026 - masterwishx (as current author and maintainer of this file)
+#      2025 - masterwishx (as current author and maintainer of this file)
+#      2026 - masterwishx (as current author and maintainer of this file), with contributions by chodeus, Joly0 (parts of code from mover tuning package)
 #License: GPLv2 only
 
 # This is the 'mover tuning' script used for moving files between the cache disk and main array.
@@ -49,6 +50,8 @@ DEBUGMODE=$(grep '^debuglogging=' "$MOVERTUNINGCFGFILE" | cut -d '"' -f 2)
 DEBUGLEVEL=$(case "$DEBUGMODE" in yes) echo 1 ;; fileOnly) echo 2 ;; no) echo 0 ;; *) echo 0 ;; esac)
 TOTALPRIMARYFILES=0
 TOTALPRIMARYFOLDERS=0
+TOTALFILES=0
+TOTALFOLDERS=0
 REMAINING_CACHE_FILES=0
 REMAINING_CACHE_FOLDERS=0
 TOTALPRIMARYSIZE=0
@@ -65,6 +68,15 @@ TOTALUNATTENDEDSIZE=0
 REMAINING_UNATTENDED_FILES=0
 REMAINING_UNATTENDED_FOLDERS=0
 REMAINING_UNATTENDED_SIZE=0
+MOVEDFILES=0
+MOVEDFOLDERS=0
+MOVEDSIZE=0
+NOTMOVEDFILES=0
+NOTMOVEDSIZE=0
+NOTMOVEDFOLDERS=0
+VANISHEDFILES=0
+VANISHEDFOLDERS=0
+SYNCFAILED=0
 COUNT_SECONDARY_FILES=0
 overrideFlag=0
 UNRAID_MOVER_LOGLEVEL=0
@@ -194,7 +206,10 @@ unraid_notify() {
     #
     # In Moved Only mode, suppress success/warning when nothing moved, exit the function
     if [[ "$NOTIFY" == "movedOnly" ]] && [[ "$flag" == "success" || "$flag" == "warning" ]]; then
-        if [[ "$TOTALFILES" -eq 0 ]]; then
+        # a real run counts what was moved; test mode has only the plan
+        local moved=$((MOVEDFILES + MOVEDFOLDERS))
+        [ "$TESTMODE" = "yes" ] && moved=$((TOTALFILES + TOTALFOLDERS))
+        if [[ "$moved" -eq 0 ]]; then
             mvDebuglogger "Moved Only notify mode activated. No files were moved, and notifications are disabled." "Notify Mode"
             return 0 # Do not process success messages
         else
@@ -213,7 +228,7 @@ unraid_notify() {
     fi
     #
     # Call the Unraid notification script
-    /usr/local/emhttp/webGui/scripts/notify -s "Mover Tuning Notification" -d "$message" -i "$severity" -l "/Settings/Scheduler"
+    /usr/local/emhttp/webGui/scripts/notify -s "$(translate_text "Mover Tuning Notification")" -d "$message" -i "$severity" -l "/Settings/Scheduler"
 }
 
 pool_fstype() {
@@ -309,10 +324,14 @@ validate_filename() {
 }
 
 # find's -path glob and the eval each strip one level, so a literal backslash
-# needs four. Order matters: backslash first, then '['.
+# needs four. Order matters: backslash first, then '[', then the shell's own three,
+# whose escapes the eval consumes before find ever sees the name.
 escape_find_path() {
     FIND_PATH_ESC=${1//\\/\\\\\\\\}
     FIND_PATH_ESC=${FIND_PATH_ESC//[/\\[}
+    FIND_PATH_ESC=${FIND_PATH_ESC//\"/\\\"}
+    FIND_PATH_ESC=${FIND_PATH_ESC//\$/\\\$}
+    FIND_PATH_ESC=${FIND_PATH_ESC//\`/\\\`}
 }
 
 # Function for verbose output and logging
@@ -330,6 +349,34 @@ escape_find_path() {
 # Wraps a path for a log message: the debug package ends a path at the quote, so an
 # embedded quote - an edge case, but the last redaction hole - would expose the rest.
 qp() { local p=${1//\\/\\\\}; printf '"%s"' "${p//\"/\\\"}"; }
+
+# Fills each %s in TEXT from the remaining arguments; an inserted argument is never rescanned.
+fill_template() {
+    local text="$1" out="" arg
+    shift
+    for arg in "$@"; do
+        [[ "$text" == *%s* ]] || break
+        out+="${text%%"%s"*}$arg"
+        text="${text#*"%s"}"
+    done
+    printf '%s' "$out$text"
+}
+
+# Notification text in the GUI language; the English template is the fallback when the helper fails.
+translate_text() {
+    local text
+    text=$(/usr/bin/php -q /usr/local/emhttp/plugins/ca.mover.tuning/translate.php "$1" 2>/dev/null)
+    [ -n "$text" ] || text="$1"
+    fill_template "$text" "${@:2}"
+}
+
+# Logs the English message and sends its translation as a notification: mvlogger_t TEMPLATE FLAG [ARG ...]
+mvlogger_t() {
+    local template="$1" flag="$2"
+    shift 2
+    mvlogger "$(fill_template "$template" "$@")"
+    unraid_notify "$(translate_text "$template" "$@")" "$flag"
+}
 
 mvlogger() {
     local msg="$1"
@@ -441,7 +488,7 @@ getMoverSettings() {
     timezone=$(grep "timeZone=" "/boot/config/ident.cfg" | cut -d '"' -f 2)
 
     if [[ ! -f "$config_file" ]]; then
-        mvlogger "Error: Config file '$config_file' not found." "failure"
+        mvlogger_t "Error: Config file '%s' not found." "failure" "$config_file"
         return 1
     fi
 
@@ -1142,7 +1189,7 @@ createFilteredFilelist() {
                     -not -path "/mnt/$PRIMARYSTORAGENAME/*" \
                     -not -path "/mnt/$SECONDARYSTORAGENAME/*" \
                     -not -path "/mnt/user*" \
-                    -not -path "/mnt/disk*" \
+                    -not -path "/mnt/disk[0-9]/*" -not -path "/mnt/disk[0-9][0-9]/*" \
                     -maxdepth 2 | cut -d'/' -f3 | tr '\n' ' ')
             else
                 UNATTENDEDSTORAGE=$(find /mnt -type d -name "$SHARENAME" \
@@ -1428,7 +1475,7 @@ createFilteredFilelist() {
                 mvlogger "Warning: Windows-style CRLF line endings detected in ${SKIPFILESLIST}. Converting to LF..."
                 mvDebuglogger "Detected Windows CRLF endings in skip file ${SKIPFILESLIST}. Converting to LF..." "Prepare Skipped Path"
                 if ! sed -i 's/\r$//' "${SKIPFILESLIST}"; then
-                    mvlogger "Error: Failed to convert CRLF line endings in ${SKIPFILESLIST}. Check file permissions." "failure"
+                    mvlogger_t "Error: Failed to convert CRLF line endings in %s. Check file permissions." "failure" "${SKIPFILESLIST}"
                 fi
             fi
 
@@ -1507,11 +1554,13 @@ createFilteredFilelist() {
         if { [ -z "$OMOVERTHRESH" ] || [ "$POOLPCTUSED" -le "$OMOVERTHRESH" ]; } && { [ "$SHAREUSECACHE" = "prefer" ] || [ "$SHAREUSECACHE" = "yes" ]; } && { [ -n "$SKIPFILETYPES" ] || [ -n "$globalSkipFileTypes" ]; }; then
             mvlogger "Skipping Filetypes from List. File sizes are taken into account for the calculation of the threshold"
             for ext in $([ $overrideFlag = 1 ] && echo -n "$SKIPFILETYPES") $(echo -n "$globalSkipFileTypes"); do
-                # Escape '!' character in the extension (fork: '!' broke FINDSTR).
-                # Only ONE -not -name is appended -- upstream's unescaped copy is dropped,
-                # keeping both would exclude every extension twice.
+                # Escape '!' first (fork: a bare '!' broke FINDSTR), then apply upstream's
+                # single-quote escaping, which is injection hardening -- the extension lands
+                # inside a single-quoted find argument. Both escapes are needed and they
+                # compose. Only ONE -not -name is appended: keeping both sides' copies would
+                # exclude every extension twice.
                 escaped_ext=$(echo "$ext" | sed 's/!/\\!/g')
-                FINDSTR="$FINDSTR -not -name '*.$escaped_ext'"
+                FINDSTR="$FINDSTR -not -name '*.${escaped_ext//\'/\'\\\'\'}'"
                 # Upstream's measurement, which is a real fix: the fork had -name '*.$ext'
                 # inside "$( ... )", so $ext never expanded, find matched nothing, and
                 # du -sh with empty input fell back to measuring '.'.
@@ -1597,23 +1646,29 @@ createFilteredFilelist() {
         fi
         # find prints ...|%y|%p| so a name containing a pipe spills across
         # $7..$(NF-1). NF is 8 for a pipe-free name (the empty field after the
-        # trailing pipe is always present), so the loop is a no-op then. fp_i,
-        # not i: the helpers above use bare i and n as implicit globals.
+        # trailing pipe is always present), so the loop is a no-op then.
+        #
+        # fp_i and FULLPATH, NOT upstream's bare i and path: the fork's
+        # shouldIgnoreFile() and hasPriorityMapping() helpers use bare i and n as
+        # implicit awk globals, so a bare i in this record rule would clobber their
+        # loop counters mid-iteration. Upstream has no such helpers and so no reason
+        # to care. Keep the fork names; take upstream's logic below.
         FINDSTR="$FINDSTR FULLPATH = \$7; for (fp_i = 8; fp_i < NF; fp_i++) FULLPATH = FULLPATH \"|\" \$fp_i;
         "
-        # Get Birthtime with stat if CTIME option enabled
-        if [ "$CTIME" == "yes" ]; then
-            FINDSTR="$FINDSTR cmd=\"stat -c%W \\\"\" FULLPATH \"\\\"\";
-                cmd | getline result;
-                close(cmd);
-                sub(/\\n\$/, \"\", result);
-                \$1 = result;
-            "
-        fi
-
-        # Get Birthtime with stat if ATIME option enabled
-        if [ "$ATIME" == "yes" ]; then
-            FINDSTR="$FINDSTR cmd=\"stat -c%X \\\"\" FULLPATH \"\\\"\";
+        # upstream: a line break in a name would split this newline-delimited row into
+        # a forged one, so such a name is skipped rather than trusted
+        FINDSTR="$FINDSTR if (FULLPATH ~ /[\\n\\r]/) { gsub(/[\\n\\r]/, \"?\", FULLPATH); print \"Skipping a name holding a line break: \" FULLPATH > \"/dev/stderr\"; next }"
+        # Birth time (CTIME) or access time (ATIME) comes from stat, which awk runs through
+        # sh. Upstream now passes the path single-quoted with each embedded quote escaped;
+        # that replaces the fork's two \"-quoted copies, which broke on a name containing a
+        # double quote. One block instead of two -- with both options set, ATIME wins, which
+        # is what the fork's second assignment did anyway.
+        STATFMT=""
+        [ "$CTIME" == "yes" ] && STATFMT="%W"
+        [ "$ATIME" == "yes" ] && STATFMT="%X"
+        if [ -n "$STATFMT" ]; then
+            FINDSTR="$FINDSTR q = FULLPATH; gsub(/\\047/, \"\\047\\\"\\047\\\"\\047\", q);
+                cmd = \"stat -c$STATFMT \\047\" q \"\\047\";
                 cmd | getline result;
                 close(cmd);
                 sub(/\\n\$/, \"\", result);
@@ -1623,7 +1678,8 @@ createFilteredFilelist() {
 
         # Get size with du if on zfs mountpoint with compression enabled
         #        if is_zfs_pool "$PRIMARYSTORAGENAME" && [ "$(zfs get compression -Hpo value "$PRIMARYSTORAGENAME/$SHARENAME")" == "on" ]; then
-        #            FINDSTR="$FINDSTR cmd = \"du -sh \\\"\"\$6\"\\\" | numfmt --from=iec\";
+        #            FINDSTR="$FINDSTR q = path; gsub(/\\047/, \"\\047\\\"\\047\\\"\\047\", q);
+        #                cmd = \"du -sh \\047\" q \"\\047 | numfmt --from=iec\";
         #                cmd | getline result;
         #                close(cmd);
         #                sub(/\\n\$/, \"\", result);
@@ -1633,6 +1689,11 @@ createFilteredFilelist() {
         # Emits the 14-column row. find gives $1=mtime $2=size $3=sparseness
         # $4=nlinks $5=inode $6=filetype $7=filepath -- note the path is $7 now,
         # so both fork helpers take \$7 (they took \$6 under the old %p|%y order).
+        #
+        # Fork side kept whole: upstream's copy is the 13-column row with no
+        # shouldIgnoreFile() gate and no HASPRIORITY, i.e. it drops two fork features and
+        # desyncs every \$N index in decideMoveActions(). It contributes nothing the fork
+        # line lacks -- the first twelve conversions are identical.
         FINDSTR="$FINDSTR if (!shouldIgnoreFile(FULLPATH)) { printf \"%s|%s|%s|%s|%d|%d|%d|%d|%g|%d|%d|%s|%d|%s\\n\", PRIMARYSTORAGENAME, SECONDARYSTORAGENAME, SHARENAME, SHAREUSECACHE, \$1, PRIMARYSIZETHRESH, POOLBYTEUSED, \$2, \$3, \$4, \$5, \$6, hasPriorityMapping(FULLPATH), FULLPATH } }'"
 
         # Exclude Downloads/incomplete folder
@@ -1673,14 +1734,17 @@ createFilteredFilelist() {
     # Priority routing is applied per row from the path and size in decideMoveActions.
     sort -t '|' -k1,1 -k4,4 -k5,5nr -k11,11 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
     # Need to remove duplicate (cache and array)
-    if grep -q "/mnt/disk" "$FILTERED_FILELIST"; then
+    if awk -F'|' '$14 ~ /^\/mnt\/disk[0-9]+\// { found = 1; exit } END { exit !found }' "$FILTERED_FILELIST"; then
         mvlogger "$(titleLine 'Optimizing Filtered Filelist' '-')"
         tempfile1=$(mktemp)
         tempfile2=$(mktemp)
 
         mvlogger "Removing duplicate giving priority to cache"
-        grep -v "/mnt/disk" "$FILTERED_FILELIST" >"$tempfile1"
-        grep "/mnt/disk" "$FILTERED_FILELIST" >"$tempfile2"
+        # The path is field 14 on this fork -- $13 is HASPRIORITY, a bare 0/1 that never
+        # matches this pattern, so upstream's $13 silently skipped the whole dedup block.
+        # Only a numbered disk is the array: a pool may be named diskpool.
+        awk -F'|' '$14 !~ /^\/mnt\/disk[0-9]+\//' "$FILTERED_FILELIST" >"$tempfile1"
+        awk -F'|' '$14 ~ /^\/mnt\/disk[0-9]+\//' "$FILTERED_FILELIST" >"$tempfile2"
         cat "$tempfile1" "$tempfile2" | awk -F"|" '
             function is_duplicate(key) {
                 if (prev[key]) {
@@ -1690,18 +1754,12 @@ createFilteredFilelist() {
                     return false
                 }
             }
+            # the path is the last field and may itself contain the separator
+            function full_path(   p, i) { p = $14; for (i = 15; i <= NF; i++) p = p "|" $i; return p }
             function extract_path(filepath) {
                 # Optimized path extraction using sub
                 sub(/^\/[^\/]+\/[^\/]+\/[^\/]+\//, "", filepath)
                 return filepath
-            }
-            function joinpath(  i, s) {
-                # FILEPATH is last, so a name containing a pipe spills into
-                # $15..$NF. Rejoin them. NF == 14 makes the loop a no-op.
-                # i and s are locals -- a global i would clobber caller loops.
-                s = $14
-                for (i = 15; i <= NF; i++) s = s "|" $i
-                return s
             }
             BEGIN {
                 FS = OFS = "|"
@@ -1720,17 +1778,25 @@ createFilteredFilelist() {
                 if (system("[ -e \"" SOFTSTOPFILE "\" ]") == 0) {
                     exit 1
                 }
-                # $14 is FILEPATH on this fork ($13 is HASPRIORITY); the
-                # 13-column upstream list had the path at $13.
+                # full_path() rejoins FILEPATH from $14 on: it is the last column and a
+                # name may contain the separator. Upstream defines it starting at $13,
+                # which is HASPRIORITY here -- corrected at the definition, not here.
+                #
+                # This uses upstream function and NOT the fork old
+                # "full_path = joinpath()" variable: upstream turned full_path into an awk
+                # function, so assigning a variable of the same name is a gawk PARSE error
+                # ("used as a variable or an array"), which would empty the filtered list
+                # and move nothing. joinpath() was identical in behaviour and is retired.
                 # NB: no apostrophes in here -- this awk body is a single-quoted
                 # shell string, so one would terminate it.
-                full_path = joinpath()
-                file_path = extract_path(full_path)
+                file_path = extract_path(full_path())
 
                 # Handle duplicates
                 key = $3 "|" $5 "|" $8 "|" file_path
                 if (! is_duplicate(key)) {
-                    printf "%s|%s|%s|%s|%d|%d|%d|%d|%g|%d|%d|%s|%d|%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, full_path
+                    # Fork 14-column row ($13 = HASPRIORITY, path last), upstream
+                    # full_path() call -- the variable form would not parse, see above.
+                    printf "%s|%s|%s|%s|%d|%d|%d|%d|%g|%d|%d|%s|%d|%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, full_path()
                 }
             }' >"$FILTERED_FILELIST"
         mvlogger "Sorting"
@@ -1745,6 +1811,35 @@ createFilteredFilelist() {
     awk -F'|' 'NR==1 || $4!="yes"' "$FILTERED_FILELIST" >"$reorderfile"
     awk -F'|' 'NR>1 && $4=="yes"' "$FILTERED_FILELIST" | sort -t '|' -k1,1 -k5,5n -k11,11 >>"$reorderfile"
     mv -f "$reorderfile" "$FILTERED_FILELIST"
+}
+
+# processTheMoves refuses a file whose hardlinks are not all listed: hold it at planning like an
+# ignored file. That refusal marks the sync incomplete through not_moved, so holding early must do
+# the same, or lastCacheSync moves past a held file and later runs no longer consider it.
+holdPartialHardlinks() {
+    local held files bytes tmp
+    [ -s "$FILTERED_FILELIST" ] || return
+    tmp=$(mktemp)
+    # key mirrors the SYNCED_FILES_ARR lookup in processTheMoves: storage, links, inode, mtime
+    if ! held=$(awk -F'|' -v OFS='|' -v out="$tmp" '
+        function full_path(   p, i) { p = $14; for (i = 15; i <= NF; i++) p = p "|" $i; return p }
+        function key(   parts) { split(full_path(), parts, "/"); return parts[3] "|" $10 "|" $11 "|" $5 }
+        NR == FNR { if (FNR > 1 && $12 == "f" && $10 > 1) names[key()]++; next }
+        FNR > 1 && $12 == "f" && $10 > 1 && $4 != "skipped" && names[k = key()] < $10 {
+            $4 = "skipped"; files++
+            if (!(k in seen)) { seen[k] = 1; bytes += $8 }
+        }
+        { print > out }
+        END { printf "%d %d\n", files, bytes }' "$FILTERED_FILELIST" "$FILTERED_FILELIST"); then
+        rm -f "$tmp"
+        return
+    fi
+    mv -f "$tmp" "$FILTERED_FILELIST"
+    read -r files bytes <<<"$held"
+    if [ "$files" -gt 0 ]; then
+        SYNCFAILED=1
+        mvlogger "$files files representing $(bytes_to_human "$bytes") stay where they are: some of their hardlinks are not in the list of files to move (ignore list or another filter)"
+    fi
 }
 
 decideMoveActions() {
@@ -1872,15 +1967,17 @@ decideMoveActions() {
             return 0
         }
 
-        function joinpath(  i, s) {
-            # FILEPATH is last, so a name containing a pipe spills into
-            # $15..$NF. Rejoin them. NF == 14 makes the loop a no-op.
-            # i and s are locals -- a global i would clobber caller loops.
-            s = $14
-            for (i = 15; i <= NF; i++) s = s "|" $i
-            return s
-        }
 
+        # Upstream full_path(), WITHOUT the second "awk -F|" opener that came with it:
+        # this fork opens the program higher up (see the -v list that also passes
+        # PRIORITY_MAPPINGS and IGNORE_LIST, which upstream opener lacks) so that the
+        # fork awk helpers live inside it. Keeping upstream opener too would open the
+        # program twice and pass neither fork variable.
+        #
+        # Rejoins from $14: FILEPATH is last on the fork 14-column list and a name may
+        # contain the separator. Upstream starts at $13, which is HASPRIORITY here.
+        # the path is the last field and may itself contain the separator
+        function full_path(   p, i) { p = $14; for (i = 15; i <= NF; i++) p = p "|" $i; return p }
         BEGIN {
             FS = OFS = "|"
 
@@ -1914,9 +2011,11 @@ decideMoveActions() {
 
             # Extract the part after the first three slashes (/mnt/pool/) in the
             # fourteenth field (filepath). Upstream has FILEPATH at $13; this fork
-            # inserts HASPRIORITY there and keeps the path last at $14.
-            full_path = joinpath()
-            split(full_path, path_parts, "/")
+            # inserts HASPRIORITY there and keeps the path last at $14 -- which is why
+            # full_path() is defined from $14 above rather than upstream $13.
+            # Called, not assigned: full_path is a function here, so the fork old
+            # "full_path = joinpath()" would be a gawk parse error.
+            split(full_path(), path_parts, "/")
             storage_path = path_parts[1] "/" path_parts[2] "/" path_parts[3]
             storage_pool = path_parts[3]
             file_path = ""
@@ -1996,7 +2095,7 @@ decideMoveActions() {
                     source = storage_path
                     if (SYNCHRONIZECACHE == "yes" && ($4 != "only" && $4 != "skipped" && $4 != "prefer") && ($5 >= LASTCACHESYNC || RESYNCHRONIZECACHE == "yes")) {
                         action = "sync from primary"
-                        destination = getPriorityDestination(full_path, $8, "/mnt/" $2)
+                        destination = getPriorityDestination(full_path(), $8, "/mnt/" $2)
                         if ($12 == "d") {
                             pool_stats[$1]["folders_from_primary"] += 1
                         } else {
@@ -2017,7 +2116,7 @@ decideMoveActions() {
                     # accounting and is the ONLY decrement in the file -- without it the
                     # threshold gate never closes.
                     # (No apostrophes here: this awk body is a single-quoted shell string.)
-                    destination = getPriorityDestination(full_path, $8, "/mnt/" $2)
+                    destination = getPriorityDestination(full_path(), $8, "/mnt/" $2)
                     net_delta[$1] -= $8
                     if ($12 == "d") {
                         pool_stats[$1]["folders_from_primary"] += 1
@@ -2027,7 +2126,7 @@ decideMoveActions() {
                     pool_stats[$1]["total_size_from_primary"] += $8
                 }
             } else {
-                if (storage_pool == "user" || ($2 == "user0" && storage_pool ~ "disk")) {
+                if (storage_pool == "user" || ($2 == "user0" && storage_pool ~ /^disk[0-9]+$/)) {
                     # Make decision to move or keep:
                     action = (($4 == "only" && REBALANCESHARES == "yes") || ($4 == "prefer" && remaining_bytes_used[$1] <= $6 && (AGE == -1 || AGE >= 0))) ? "move from secondary" : "keep on secondary"
 
@@ -2059,17 +2158,12 @@ decideMoveActions() {
                             destination = "/mnt/" $1
                             # the follow-up is a sync, which keeps the file on the primary
                             net_delta[$1] += $8
-                            if ($12 == "d") {
-                                pool_stats[$1]["folders_from_unattended"] += 1
-                            } else {
-                                pool_stats[$1]["files_from_unattended"] += 1
-                            }
-                            pool_stats[$1]["total_size_from_unattended"] += $8
+                            # two rows, one file: the shared block below counts it once
                             # Add a line in mover_action as intermediary step
                             printf "%s|%s|%s|%d|%d|%d|%d|%d|%d|%s|%s|%s|%s|%s|%s\n", $1, $3, $4, $5, $8, pool_sums[$1], $6, remaining_bytes_used[$1], $10, $11, action, source, destination, $12, file_path
                             action="sync unattended to secondary"
                             source = "/mnt/" $1
-                            destination = getPriorityDestination(full_path, $8, "/mnt/" $2)
+                            destination = getPriorityDestination(full_path(), $8, "/mnt/" $2)
                         } else {
                             if (action == "move unattended to primary") {
                                 source = storage_path
@@ -2078,7 +2172,7 @@ decideMoveActions() {
                             } else {
                                 action = "move unattended to secondary"
                                 source = storage_path
-                                destination = getPriorityDestination(full_path, $8, "/mnt/" $2)
+                                destination = getPriorityDestination(full_path(), $8, "/mnt/" $2)
                             }
                         }
                         if ($12 == "d") {
@@ -2150,27 +2244,24 @@ decideMoveActions() {
     fi
 
     ## Printing some stats
-    TOTALPRIMARYFILES=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 2)
-    TOTALPRIMARYSIZE=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 3)
-    TOTALPRIMARYFOLDERS=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 4)
-    TOTALSECONDARYFILES=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 5)
-    TOTALSECONDARYSIZE=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 6)
-    TOTALSECONDARYFOLDERS=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 7)
-    TOTALUNATTENDEDFILES=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 8)
-    TOTALUNATTENDEDSIZE=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 9)
-    TOTALUNATTENDEDFOLDERS=$(grep "TOTAL" "$STATS_FILE" | cut -d "|" -f 10)
+    # one exact read of the totals row: a pool whose name holds this text is not it
+    IFS='|' read -r _ TOTALPRIMARYFILES TOTALPRIMARYSIZE TOTALPRIMARYFOLDERS \
+        TOTALSECONDARYFILES TOTALSECONDARYSIZE TOTALSECONDARYFOLDERS \
+        TOTALUNATTENDEDFILES TOTALUNATTENDEDSIZE TOTALUNATTENDEDFOLDERS \
+        <<<"$(awk -F'|' '$1 == "TOTAL"' "$STATS_FILE")"
 
     # Add total files and size
-    TOTALFILES=$((TOTALPRIMARYFILES + TOTALSECONDARYFILES + TOTALUNATTENDEDFILES + TOTALPRIMARYFOLDERS + TOTALSECONDARYFOLDERS + TOTALUNATTENDEDFOLDERS))
+    TOTALFILES=$((TOTALPRIMARYFILES + TOTALSECONDARYFILES + TOTALUNATTENDEDFILES))
+    TOTALFOLDERS=$((TOTALPRIMARYFOLDERS + TOTALSECONDARYFOLDERS + TOTALUNATTENDEDFOLDERS))
     TOTALSIZE=$((TOTALPRIMARYSIZE + TOTALSECONDARYSIZE + TOTALUNATTENDEDSIZE))
-    UNATTENDEDFILES=$(grep -c "keep misplaced" "$MOVER_ACTIONLIST")
+    UNATTENDEDFILES=$(awk -F'|' '$11 == "keep misplaced" { n++ } END { print n + 0 }' "$MOVER_ACTIONLIST")
 
     # Print stats
     if [ "$UNATTENDEDFILES" -gt 0 ]; then
         mvlogger "Warning: $UNATTENDEDFILES files are stored outside their primary or secondary storages and won't be moved according to actual settings."
     fi
-    if [ $TOTALFILES -gt 0 ]; then
-        mvlogger "A total of $TOTALFILES files representing $(bytes_to_human $TOTALSIZE) will be moved/synced:"
+    if [ $((TOTALFILES + TOTALFOLDERS)) -gt 0 ]; then
+        mvlogger "A total of $TOTALFILES files and $TOTALFOLDERS folders representing $(bytes_to_human $TOTALSIZE) will be moved/synced:"
         if [ "$TOTALPRIMARYFILES" -gt 0 ]; then
             # Read data line by line using while loop, unused: _ _ _ _ _ _ = SECONDARYFILES SECONDARYSIZE ...
             while IFS="|" read -r PRIMARYSTORAGENAME PRIMARYFILES PRIMARYSIZE PRIMARYFOLDERS _ _ _ _ _ _; do
@@ -2205,6 +2296,28 @@ decideMoveActions() {
     fi
 }
 
+# Counts names that did not transfer ($1, 1 when unknown; $2 = their bytes, the row's size by default);
+# a sync row also holds lastCacheSync, since a later run only syncs files newer than the mark.
+not_moved() {
+    local failed=${1:-1} bytes=${2:-$FILESIZE} phys="$SOURCE|$NBLINKS|$INODE|$MODIFYTIME"
+    # a folder carries no file count or bytes but counts as a folder; a failed folder sync still holds lastCacheSync below
+    if [ "$FILETYPE" != "f" ]; then
+        [ "$failed" -gt 0 ] && NOTMOVEDFOLDERS=$((NOTMOVEDFOLDERS + 1))
+        failed=0; bytes=0
+    fi
+    # a hardlink group's bytes belong to its first failed partition; later partitions are the same file
+    if [ -n "${CHARGED_BYTES[$phys]}" ]; then
+        bytes=0
+    elif [ "$bytes" -gt 0 ]; then
+        CHARGED_BYTES[$phys]=1
+    fi
+    NOTMOVEDFILES=$((NOTMOVEDFILES + failed))
+    NOTMOVEDSIZE=$((NOTMOVEDSIZE + bytes))
+    if [[ "$ACTION" =~ "sync" ]]; then
+        SYNCFAILED=1
+    fi
+}
+
 # Internal move engine
 processTheMoves() {
     if [ -e $SOFTSTOPFILE ]; then
@@ -2232,6 +2345,10 @@ processTheMoves() {
     REMAINING_UNATTENDED_SIZE=$TOTALUNATTENDEDSIZE
     REMAINING_UNATTENDED_FILES=$TOTALUNATTENDEDFILES
     REMAINING_UNATTENDED_FOLDERS=$TOTALUNATTENDEDFOLDERS
+    local -A HANDLED_LINKS=()
+    local -A CHARGED_BYTES=()
+    local -A STAGED_OK=()
+    local -A STAGED_VANISHED=()
 
     # Dry mode info:
     if [ "$TESTMODE" = "yes" ]; then
@@ -2239,18 +2356,25 @@ processTheMoves() {
     fi
 
     # Loop through each line in the action list (except those where action is keep), starting by cache and then array
-    GREP_CMDS=(
-        "awk -F'|' '\$11 == \"move from primary\"' '$MOVER_ACTIONLIST'"
-        "awk -F'|' '\$11 == \"move unattended to secondary\"' '$MOVER_ACTIONLIST'"
-        "awk -F'|' '\$11 == \"sync from primary\"' '$MOVER_ACTIONLIST'"
-        "awk -F'|' '\$11 == \"move from secondary\"' '$MOVER_ACTIONLIST'"
-        "awk -F'|' '\$11 == \"sync from secondary\"' '$MOVER_ACTIONLIST'"
-        "awk -F'|' '\$11 == \"move unattended to primary\"' '$MOVER_ACTIONLIST'"
-        "awk -F'|' '\$11 == \"sync unattended to secondary\"' '$MOVER_ACTIONLIST'"
+    # the action is field 11: matching the whole row would let a filename holding this text join the pass
+    #
+    # Upstream's MOVE_ACTIONS replaces the fork's GREP_CMDS array of prebuilt awk command
+    # strings. This is not a preference: the consumer loop just below iterates
+    # "${MOVE_ACTIONS[@]}" and git auto-merged that loop with no conflict marker, so
+    # keeping the fork's array would leave the loop walking an undefined one -- every pass
+    # empty, nothing moved, no error. Same field-11 anchoring either way.
+    MOVE_ACTIONS=(
+        "move from primary"
+        "move unattended to secondary"
+        "sync from primary"
+        "move from secondary"
+        "sync from secondary"
+        "move unattended to primary"
+        "sync unattended to secondary"
     )
-    # Ignore "grep '|keep on primary|' '$MOVER_ACTIONLIST'" action because it's not an action
+    # "keep on primary", "keep on secondary" and "keep misplaced" are not actions, so they are absent
 
-    for GREP_CMD in "${GREP_CMDS[@]}"; do
+    for ACTION_PASS in "${MOVE_ACTIONS[@]}"; do
         while IFS="|" read -r PRIMARYSTORAGENAME SHARENAME SHAREUSECACHE MODIFYTIME FILESIZE POOLSUM THRESHOLD PROJECTED NBLINKS INODE ACTION SOURCE DESTINATION FILETYPE FILEPATH; do
             if [ -e $SOFTSTOPFILE ]; then
                 [ $SOFTSTOP_ACK = true ] || mvlogger "Soft Stopping requested" && SOFTSTOP_ACK=true
@@ -2262,17 +2386,38 @@ processTheMoves() {
                 continue
             fi
 
-            # Skip filesize = 0 (hardlinks already handled in a previous loop)
+            # The first row of a hardlinked file transfers all its names; the source is gone after
+            # a move, so later rows are matched on the SYNCED_FILES_ARR key below, not the file. The key
+            # carries the plan, so a group split across plans keeps every partition instead of dropping one.
             NBLINKS="${NBLINKS:-0}"
-            if [ -f "${SOURCE}/${FILEPATH}" ] && [ "$NBLINKS" -gt 1 ] && [ "$FILESIZE" = 0 ]; then
-                continue
+            if [ "$FILETYPE" = "f" ] && [ "$NBLINKS" -gt 1 ]; then
+                link_key="$ACTION|$SOURCE|$DESTINATION|$NBLINKS|$INODE|$MODIFYTIME"
+                [ -n "${HANDLED_LINKS[$link_key]}" ] && continue
+                HANDLED_LINKS[$link_key]=1
+            fi
+
+            # A chained rebalance moves the file to the pool and a second row syncs it on. That sync row
+            # owns the file's count, so its move row transfers without counting; a lone move still counts.
+            chain_key="$PRIMARYSTORAGENAME|$SHARENAME|$MODIFYTIME|$NBLINKS|$INODE|$FILEPATH"
+            STAGE_ROW=0
+            if [ "$ACTION" = "move unattended to primary" ] && STAGE_PATH="$FILEPATH" awk -F'|' -v inode="$INODE" -v mtime="$MODIFYTIME" -v pool="$DESTINATION" '
+                function full_path(   p, i) { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; return p }
+                BEGIN { inode = inode ""; mtime = mtime "" }
+                $11 == "sync unattended to secondary" && $10 == inode && $4 == mtime && $12 == pool && full_path() == ENVIRON["STAGE_PATH"] { found = 1; exit }
+                END { exit !found }' "$MOVER_ACTIONLIST"; then
+                STAGE_ROW=1
             fi
 
             # Temporary fix: prevent moving empty directories that are in the skip list (better to remove duplicate empty folders from the lists instead?)
             # Applies only to empty directories scheduled to be moved
             if [[ "$FILETYPE" == "d" && "$ACTION" =~ "move" ]]; then
                 # If the directory is listed in the skiplist, skip it
-                if [[ -n "$SKIPFILESLIST" && -f "$SKIPFILESLIST" ]] && grep -q "${SOURCE}/${FILEPATH}" "$SKIPFILESLIST"; then
+                # a whole-line compare: as a grep pattern the path is a regex, and "a" matched "abc"
+                if [[ -n "$SKIPFILESLIST" && -f "$SKIPFILESLIST" ]] && SKIP_DIR="${SOURCE}/${FILEPATH}" awk '
+                    BEGIN { d = ENVIRON["SKIP_DIR"]; sub(/\/$/, "", d) }
+                    { sub(/\r$/, ""); sub(/\/$/, "") }
+                    $0 == d { found = 1; exit }
+                    END { exit !found }' "$SKIPFILESLIST"; then
                     mvlogger "Skipping empty folder $(qp "${SOURCE}/${FILEPATH}") as it is listed in the skip list."
                     continue # do not move this folder
                 fi
@@ -2289,20 +2434,15 @@ processTheMoves() {
             #mvDebuglogger "SYNCED_FILES= $SYNCED_FILES" "SYNCED_FILES"
             #mvDebuglogger "FILEPATH= $FILEPATH" "FILEPATH"
 
-            # Check File by validate function and skip if error
-            if [ "$VALIDATE_FILENAMES" = "yes" ]; then
-                if ! validate_filename "$(basename "$FILEPATH")"; then
-                    mvlogger "Error: Invalid filename path: $(qp "$SOURCE/$FILEPATH"). Please either change the filename to valid or disable the 'Validate input filenames' option." "failure"
-                    continue
-                #else
-                #    mvlogger "Valid filename"
-                fi
-            fi
-
+            # Only rows planned the same way join the group: hardlinks in two shares can differ, and
+            # transferring them on one share's plan would apply it to the other. A short group is held below.
             # Get files to rsync as a real array. Passing the filenames to rsync
             # via this array (instead of eval) stops the shell from interpreting
             # spaces, backticks, $(...), redirections, etc. that appear in file names.
-            mapfile -t SYNCED_FILES_ARR < <(grep "|$NBLINKS|$INODE|" "$MOVER_ACTIONLIST" | grep "|$MODIFYTIME|" | grep "ary|$SOURCE|" | cut -d'|' -f15- | while IFS= read -r line; do printf '%s\n' "$SOURCE/./$line"; done)
+            # every field is compared whole, so a name containing | cannot impersonate another row
+            mapfile -t SYNCED_FILES_ARR < <(awk -F'|' -v links="$NBLINKS" -v inode="$INODE" -v mtime="$MODIFYTIME" -v action="$ACTION" -v src="$SOURCE" -v dst="$DESTINATION" '
+                BEGIN { links = links ""; inode = inode ""; mtime = mtime "" }
+                $4 == mtime && $9 == links && $10 == inode && $11 == action && $12 == src && $13 == dst { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; print src "/./" p }' "$MOVER_ACTIONLIST")
 
             # SYNCED_FILES is a display/count string only, derived from the array so
             # the extraction pipeline above runs only once per file.
@@ -2310,25 +2450,46 @@ processTheMoves() {
             for f in "${SYNCED_FILES_ARR[@]}"; do SYNCED_FILES+="$(qp "$f") "; done
             GUI_CURRENT_FILE=$SYNCED_FILES
 
+            # Check File by validate function and skip if error; rsync gets every hardlink name, so check them all
+            if [ "$VALIDATE_FILENAMES" = "yes" ]; then
+                for f in "${SYNCED_FILES_ARR[@]:-$SOURCE/./$FILEPATH}"; do
+                    validate_filename "$(basename "$f")" && continue
+                    mvlogger_t "Error: Invalid filename path: %s. Please either change the filename to valid or disable the 'Validate input filenames' option." "failure" "$(qp "${f//\/.\//\/}")"
+                    # a staged row's failure is counted once, by its sync row, which fails the same check
+                    [ "$STAGE_ROW" = 0 ] && not_moved "$(( ${#SYNCED_FILES_ARR[@]} > 0 ? ${#SYNCED_FILES_ARR[@]} : 1 ))"
+                    continue 2
+                done
+            fi
+
             # Check if list is complete (array length is exact, unlike parsing the string)
             NBFILES=${#SYNCED_FILES_ARR[@]}
             if [ -f "${SOURCE}/${FILEPATH}" ] && [ $NBFILES != "$NBLINKS" ]; then
                 mvlogger "Expected $NBLINKS files, got $NBFILES. Not moving $SYNCED_FILES to prevent breaking hardlinks"
+                [ "$STAGE_ROW" = 0 ] && not_moved "$(( NBFILES > 0 ? NBFILES : 1 ))"
+                continue
+            fi
+
+            # the sync row of a chain has nothing to sync unless its staged move delivered every name
+            if [ "$ACTION" = "sync unattended to secondary" ] && [ -z "${STAGED_OK[$chain_key]}" ]; then
+                mvlogger "Not syncing $SYNCED_FILES: its move to the primary did not complete"
+                not_moved "$(( NBFILES > 0 ? NBFILES : 1 ))"
+                # names already gone when the staged move ran were never the mover's to move
+                if [ "$FILETYPE" = "f" ]; then VANISHEDFILES=$((VANISHEDFILES + ${STAGED_VANISHED[$chain_key]:-0})); else VANISHEDFOLDERS=$((VANISHEDFOLDERS + ${STAGED_VANISHED[$chain_key]:-0})); fi
                 continue
             fi
 
             # Proceed with rsync
             if [[ "$ACTION" =~ "move" ]]; then
                 # Some verbosity
-                GUI_ACTION="Moving to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
-                mvlogger "Moving $SYNCED_FILES to  $(qp "$DESTINATION/") $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
+                GUI_ACTION="Moving to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ "$FILETYPE" = "f" ] && echo '(preserving hardlinks)')"
+                mvlogger "Moving $SYNCED_FILES to  $(qp "$DESTINATION/") $([ "$NBLINKS" -gt 1 ] && [ "$FILETYPE" = "f" ] && echo '(preserving hardlinks)')"
                 rsync_action="Move"
                 # Finalize RSYNC_CMD
                 RSYNC_CMD+=(--remove-source-files)
             elif [[ "$ACTION" =~ "sync" ]]; then
                 # Some verbosity
-                GUI_ACTION="Synchronizing to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
-                mvlogger "Synchronizing  $SYNCED_FILES to  $(qp "$DESTINATION/") $([ "$NBLINKS" -gt 1 ] && [ -f "$FILEPATH" ] && echo '(preserving hardlinks)')"
+                GUI_ACTION="Synchronizing to $DESTINATION/ $([ "$NBLINKS" -gt 1 ] && [ "$FILETYPE" = "f" ] && echo '(preserving hardlinks)')"
+                mvlogger "Synchronizing  $SYNCED_FILES to  $(qp "$DESTINATION/") $([ "$NBLINKS" -gt 1 ] && [ "$FILETYPE" = "f" ] && echo '(preserving hardlinks)')"
                 rsync_action="Sync"
             fi
 
@@ -2340,18 +2501,30 @@ processTheMoves() {
                 filetype="folder"
             fi
 
+            rc=0
             # Check if action and move files tool is unraid move
             if [[ "$ACTION" =~ "move" && "$MOVE_FILES_TOOL" = "move" ]]; then
                 if [ "$TESTMODE" = "yes" ]; then
                     mvlogger "TEST MODE: Would move using Unraid move utility"
                 else
-                    mvDebuglogger "Move cmd: move, Move $filetype: $(qp "$SOURCE/$FILEPATH"), Dest: $(qp "$DESTINATION/")" "Move Action"
-                    # Perform unraid binary move.
-                    find "$SOURCE/$FILEPATH" | /usr/libexec/unraid/move "$DEBUGGING" >>"$MOVER_DEBUG_LOG" 2>&1
-                    move_exit_code=$?
-
-                    if [ $move_exit_code -ne 0 ]; then
-                        mvlogger "Unraid move failed for $FILEPATH (exit code: $move_exit_code)"
+                    mvDebuglogger "Move cmd: move, Move $filetype: $SYNCED_FILES, Dest: $(qp "$DESTINATION/")" "Move Action"
+                    # Unraid move keeps hardlinks only among names given in one run and skips the file otherwise
+                    #
+                    # Union: upstream's structure is required -- the whole hardlink group must
+                    # be handed to one move invocation, and MOVE_DEBUG_ARGS word-splits
+                    # $DEBUGGING safely where the fork passed it as one quoted argument. The
+                    # fork's exit-code reporting is kept, rewritten as "|| { rc=...; }" so it
+                    # adds no if of its own: the single shared fi below closes the FILETYPE
+                    # test. rc is what not_moved/SYNCFAILED read to decide whether
+                    # lastCacheSync may advance, so it must be set here, not just logged.
+                    MOVE_DEBUG_ARGS=()
+                    read -r -a MOVE_DEBUG_ARGS <<<"$DEBUGGING"
+                    if [ "$FILETYPE" = "f" ]; then
+                        printf '%s\n' "${SYNCED_FILES_ARR[@]//\/.\//\/}" | /usr/libexec/unraid/move "${MOVE_DEBUG_ARGS[@]}" >>"$MOVER_DEBUG_LOG" 2>&1 ||
+                            { rc=$?; mvlogger "Unraid move failed for $(qp "$FILEPATH") (exit code: $rc)"; }
+                    else
+                        find "$SOURCE/$FILEPATH" | /usr/libexec/unraid/move "${MOVE_DEBUG_ARGS[@]}" >>"$MOVER_DEBUG_LOG" 2>&1 ||
+                            { rc=$?; mvlogger "Unraid move failed for $(qp "$FILEPATH") (exit code: $rc)"; }
                     fi
                 fi
             else
@@ -2366,17 +2539,64 @@ processTheMoves() {
                     mvDebuglogger "Rsync cmd: $RSYNC_CMD_LOG, $rsync_action $filetype: $SYNCED_FILES, Dest: $(qp "$DESTINATION/")" "$rsync_action Action"
                     # Perform rsync. relative paths and hardlinks
                     if [ ${#SYNCED_FILES_ARR[@]} -gt 0 ]; then
-                        "${RSYNC_CMD[@]}" "${SYNCED_FILES_ARR[@]}" "$DESTINATION/"
-                        rsync_exit_code=$?
-
-                        if [ $rsync_exit_code -ne 0 ]; then
-                            mvlogger "Rsync failed for $FILEPATH (exit code: $rsync_exit_code)"
-                        fi
+                        # Union: upstream's "|| rc=$?" is load-bearing -- rc gates not_moved,
+                        # which sets SYNCFAILED, which decides whether lastCacheSync advances.
+                        # The fork's per-file failure log is kept inside the same || group so
+                        # no extra if/fi is introduced into this block.
+                        "${RSYNC_CMD[@]}" "${SYNCED_FILES_ARR[@]}" "$DESTINATION/" ||
+                            { rc=$?; mvlogger "Rsync failed for $(qp "$FILEPATH") (exit code: $rc)"; }
                     else
-                        mvlogger "Error: No files found to move for $(qp "$SOURCE/$FILEPATH")" "failure"
+                        mvlogger_t "Error: No files found to move for %s" "failure" "$(qp "$SOURCE/$FILEPATH")"
+                        rc=1
                     fi
                 fi
             fi
+
+            # a dry run counts every name as done; a real run counts only verified arrivals below
+            names=${#SYNCED_FILES_ARR[@]}
+            arrived=$names
+            # Unraid move exits 0 even when it fails or skips an existing target, so check every name
+            if [ "$TESTMODE" != "yes" ]; then
+                arrived=0
+                vanished=0
+                for f in "${SYNCED_FILES_ARR[@]}"; do
+                    rel=${f#"$SOURCE/./"}
+                    # a name already gone from the source was not the mover's to move: counted, never notified
+                    if [ ! -e "$DESTINATION/$rel" ]; then
+                        [ -e "$SOURCE/$rel" ] || vanished=$((vanished + 1))
+                        continue
+                    fi
+                    # a synced file counts only when the copy matches: rsync --archive keeps size and mtime
+                    if [[ "$ACTION" =~ "sync" && "$FILETYPE" = "f" ]] && [ "$(stat -c '%s %Y' "$SOURCE/$rel" 2>/dev/null)" != "$(stat -c '%s %Y' "$DESTINATION/$rel" 2>/dev/null)" ]; then
+                        [ -e "$SOURCE/$rel" ] || vanished=$((vanished + 1))
+                        continue
+                    fi
+                    # rsync leaves a moved folder's source behind, so only a file must be gone
+                    [[ "$ACTION" =~ "move" && "$FILETYPE" = "f" && -e "$SOURCE/$rel" ]] && continue
+                    arrived=$((arrived + 1))
+                done
+                # the group's bytes count as moved only once every name arrived: until then the file is
+                # still on the source and its space was not freed, so they belong to the not-moved side
+                if [ "$STAGE_ROW" = 0 ]; then
+                    [ "$FILETYPE" = "f" ] && [ "$arrived" -gt 0 ] && MOVEDFILES=$((MOVEDFILES + arrived))
+                    [ "$FILETYPE" = "d" ] && [ "$arrived" -gt 0 ] && MOVEDFOLDERS=$((MOVEDFOLDERS + 1))
+                    [ "$FILETYPE" = "f" ] && [ "$names" -gt 0 ] && [ "$arrived" = "$names" ] && MOVEDSIZE=$((MOVEDSIZE + FILESIZE))
+                    [ "$FILETYPE" = "f" ] && VANISHEDFILES=$((VANISHEDFILES + vanished))
+                    [ "$FILETYPE" = "d" ] && VANISHEDFOLDERS=$((VANISHEDFOLDERS + vanished))
+                    if [ "$names" -eq 0 ]; then
+                        not_moved
+                    elif [ "$arrived" != "$names" ]; then
+                        not_moved "$((names - arrived))"
+                    elif [ "$rc" != 0 ]; then
+                        # every name arrived yet the tool reported an error: hold the sync mark, count nothing
+                        not_moved 0 0
+                    fi
+                fi
+            fi
+
+            # a staged move that delivered every name lets its sync row proceed; one that found names gone says so
+            [ "$STAGE_ROW" = 1 ] && [ "$names" -gt 0 ] && [ "$arrived" = "$names" ] && STAGED_OK[$chain_key]=1
+            [ "$STAGE_ROW" = 1 ] && [ "${vanished:-0}" -gt 0 ] && STAGED_VANISHED[$chain_key]=$vanished
 
             # Clean parent folder of files if empty
             if [[ "$ACTION" =~ "move" && "$FILETYPE" == "f" ]] && [[ "$CLEANFOLDERS" = "yes" || "$CLEANFOLDERS" = "topFolder" ]]; then
@@ -2454,15 +2674,15 @@ processTheMoves() {
                                     mvlogger "ZFS dataset [${DATASET}] appears empty, attempting to unmount and delete..."
                                     # Unmount the ZFS dataset
                                     if ! zfs unmount "${DATASET}"; then
-                                        mvlogger "Failed to unmount ZFS dataset [${DATASET}]" "failure"
+                                        mvlogger_t "Failed to unmount ZFS dataset [%s]" "failure" "${DATASET}"
                                         continue
                                     else
                                         mvlogger "ZFS dataset [${DATASET}] successfully unmounted."
                                     fi
                                     # Destroy the ZFS dataset
                                     if ! zfs destroy "${DATASET}"; then
-                                        mvlogger "Failed to destroy ZFS dataset [${DATASET}] — attempting to remount." "failure"
-                                        zfs mount "${DATASET}" 2>/dev/null || mvlogger "Failed to remount dataset [${DATASET}]" "warning"
+                                        mvlogger_t "Failed to destroy ZFS dataset [%s] — attempting to remount." "failure" "${DATASET}"
+                                        zfs mount "${DATASET}" 2>/dev/null || mvlogger_t "Failed to remount dataset [%s]" "warning" "${DATASET}"
                                         continue
                                     else
                                         mvlogger "ZFS dataset [${DATASET}] successfully destroyed."
@@ -2596,14 +2816,19 @@ processTheMoves() {
                 fi
             fi
 
-            # Setting mover status
+            # Setting mover status: only verified arrivals leave the remaining-work counters, and a
+            # group's bytes leave once every name arrived, the same rule as MOVEDSIZE above
+            done_bytes=0
+            [ "$names" -gt 0 ] && [ "$arrived" = "$names" ] && done_bytes=$FILESIZE
+            # a staged move leaves the remaining counters to its sync row as well
+            [ "$STAGE_ROW" = 1 ] && { arrived=0; done_bytes=0; }
             if [[ "$ACTION" =~ "unattended" ]]; then
-                REMAINING_UNATTENDED_SIZE=$((REMAINING_UNATTENDED_SIZE - FILESIZE))
+                REMAINING_UNATTENDED_SIZE=$((REMAINING_UNATTENDED_SIZE - done_bytes))
                 # Check if there are any files or folders left
                 if [[ "$FILETYPE" = "f" ]]; then
-                    REMAINING_UNATTENDED_FILES=$((REMAINING_UNATTENDED_FILES - NBLINKS))
+                    REMAINING_UNATTENDED_FILES=$((REMAINING_UNATTENDED_FILES - arrived))
                 else
-                    REMAINING_UNATTENDED_FOLDERS=$((REMAINING_UNATTENDED_FOLDERS - 1))
+                    REMAINING_UNATTENDED_FOLDERS=$((REMAINING_UNATTENDED_FOLDERS - arrived))
                 fi
 
                 if [[ "$ACTION" =~ "unattended to secondary" ]]; then
@@ -2623,34 +2848,38 @@ processTheMoves() {
                 fi
             else
                 if [[ "$SOURCE" =~ $PRIMARYSTORAGENAME ]]; then
-                    REMAINING_CACHE_SIZE=$((REMAINING_CACHE_SIZE - FILESIZE))
+                    REMAINING_CACHE_SIZE=$((REMAINING_CACHE_SIZE - done_bytes))
                     # Check if there are any files or folders left
                     if [[ "$FILETYPE" = "f" ]]; then
-                        REMAINING_CACHE_FILES=$((REMAINING_CACHE_FILES - NBLINKS))
+                        REMAINING_CACHE_FILES=$((REMAINING_CACHE_FILES - arrived))
                         mvlogger "$REMAINING_CACHE_FILES files remaining from caches to array ($(bytes_to_human "$REMAINING_CACHE_SIZE"))"
                     else
-                        REMAINING_CACHE_FOLDERS=$((REMAINING_CACHE_FOLDERS - 1))
+                        REMAINING_CACHE_FOLDERS=$((REMAINING_CACHE_FOLDERS - arrived))
                         mvlogger "$REMAINING_CACHE_FOLDERS folders remaining from caches to array"
                     fi
                 else
-                    REMAINING_ARRAY_SIZE=$((REMAINING_ARRAY_SIZE - FILESIZE))
+                    REMAINING_ARRAY_SIZE=$((REMAINING_ARRAY_SIZE - done_bytes))
                     # Check if there are any files or folders left
                     if [[ "$FILETYPE" = "f" ]]; then
-                        REMAINING_ARRAY_FILES=$((REMAINING_ARRAY_FILES - NBLINKS))
+                        REMAINING_ARRAY_FILES=$((REMAINING_ARRAY_FILES - arrived))
                         mvlogger "$REMAINING_ARRAY_FILES files remaining from array to caches ($(bytes_to_human "$REMAINING_ARRAY_SIZE"))"
                     else
-                        REMAINING_ARRAY_FOLDERS=$((REMAINING_ARRAY_FOLDERS - 1))
+                        REMAINING_ARRAY_FOLDERS=$((REMAINING_ARRAY_FOLDERS - arrived))
                         mvlogger "$REMAINING_ARRAY_FOLDERS folders remaining from array to caches"
                     fi
                 fi
             fi
             moverStatusWrite
-        done <<<"$(eval "$GREP_CMD")"
+        done <<<"$(awk -F'|' -v a="$ACTION_PASS" '$11 == a' "$MOVER_ACTIONLIST")"
     done
 
     mvlogger "$(titleLine "Cleaning up" '-')"
 
-    if [ "$TESTMODE" != "yes" ] && [ ! -e $SOFTSTOPFILE ] && awk -F'|' '$11 ~ /^sync from/ { found = 1; exit } END { exit !found }' "$MOVER_ACTIONLIST"; then
+    # Upstream gate: adds the SYNCFAILED guard so a sync whose names all arrived but
+    # which rsync reported as failed cannot advance lastCacheSync past those files, and
+    # widens "^sync from" to "^sync " so unattended syncs count too.
+    if [ "$TESTMODE" != "yes" ] && [ ! -e $SOFTSTOPFILE ] && [ "$SYNCFAILED" = 0 ] &&
+        awk -F'|' '$11 ~ /^sync / { found = 1; exit } END { exit !found }' "$MOVER_ACTIONLIST"; then
         EPOCH=$(date --date="${NOW:0:4}-${NOW:5:2}-${NOW:8:2} ${NOW:11:2}:${NOW:13:2}:${NOW:15:2}" +%s)
 
         mvlogger "Set last sync date in config file/s: $EPOCH = $NOW"
@@ -2718,7 +2947,7 @@ start() {
             UNRAID_MOVER=1
         fi
     else
-        mvlogger "Fatal error: $UNRAIDCFGFILE does not exist, check this." "failure"
+        mvlogger_t "Fatal error: %s does not exist, check this." "failure" "$UNRAIDCFGFILE"
         rm $SOFTSTOPFILE
         exit 2
     fi
@@ -2744,7 +2973,7 @@ start() {
         #Get Mover Tuning Settings
         getMoverSettings "$MOVERTUNINGCFGFILE"
     else
-        mvlogger "Fatal error: $MOVERTUNINGCFGFILE does not exist, check this." "failure"
+        mvlogger_t "Fatal error: %s does not exist, check this." "failure" "$MOVERTUNINGCFGFILE"
         rm $SOFTSTOPFILE
         exit 3
     fi
@@ -2768,12 +2997,12 @@ start() {
 
     # Only start if cache enabled and present
     if ! grep -qs 'shareCacheEnabled="yes"' $UNRAIDCFGFILE && [ $(ls /boot/config/pools/*.cfg | wc -l) -lt 2 ]; then
-        mvlogger "Fatal error: cache not enabled and less than 2 pools set up." "failure"
+        mvlogger_t "Fatal error: cache not enabled and less than 2 pools set up." "failure"
         rm $SOFTSTOPFILE
         exit 4
     fi
     if ! mountpoint -q /mnt/user0 && [ $(ls /boot/config/pools/*.cfg | wc -l) -lt 2 ]; then
-        mvlogger "Fatal error: cache not present, or only cache present, and less than 2 pools set up." "failure"
+        mvlogger_t "Fatal error: cache not present, or only cache present, and less than 2 pools set up." "failure"
         rm $SOFTSTOPFILE
         exit 5
     fi
@@ -2804,6 +3033,7 @@ start() {
 
     # Proceed with filter and create filtered filelist and action filelist
     [ ! -e $SOFTSTOPFILE ] && createFilteredFilelist
+    [ ! -e $SOFTSTOPFILE ] && holdPartialHardlinks
     [ ! -e $SOFTSTOPFILE ] && decideMoveActions
 
     # Get current time to start time counter
@@ -2811,7 +3041,8 @@ start() {
     mvlogger "Action started at: $(date -d "@$START_TIME" +"%T")"
 
     # And now.. we move! ... if needed
-    [ ! -e $SOFTSTOPFILE ] && [ $TOTALFILES -gt 0 ] && processTheMoves
+    # folders alone are still work
+    [ ! -e $SOFTSTOPFILE ] && [ $((TOTALFILES + TOTALFOLDERS)) -gt 0 ] && processTheMoves
 
     mvDebuglogger "processTheMoves completed" "processTheMoves END"
 
@@ -2894,16 +3125,22 @@ start() {
     mvlogger "$(titleLine 'WE ARE DONE !' '*')"
 
     if [ "$TESTMODE" = "yes" ]; then
-        if [ "$TOTALFILES" -gt 0 ]; then
-            unraid_notify "TEST MODE: A total of $TOTALFILES files representing $(bytes_to_human "$TOTALSIZE") would be moved/synced by Mover Tuning plugin. Elapsed time: $ELAPSED_TIME" "warning"
+        if [ $((TOTALFILES + TOTALFOLDERS)) -gt 0 ]; then
+            unraid_notify "$(translate_text "TEST MODE: A total of %s files and %s folders representing %s would be moved/synced by Mover Tuning plugin. Elapsed time: %s" "$TOTALFILES" "$TOTALFOLDERS" "$(bytes_to_human "$TOTALSIZE")" "$ELAPSED_TIME")" "warning"
         else
-            unraid_notify "TEST MODE: No files would be moved/synced by Mover Tuning plugin. Elapsed time: $ELAPSED_TIME" "warning"
+            unraid_notify "$(translate_text "TEST MODE: No files would be moved/synced by Mover Tuning plugin. Elapsed time: %s" "$ELAPSED_TIME")" "warning"
         fi
     else
-        if [ "$TOTALFILES" -gt 0 ]; then
-            unraid_notify "A total of $TOTALFILES files representing $(bytes_to_human "$TOTALSIZE") were successfully moved/synced by Mover Tuning plugin. Elapsed time: $ELAPSED_TIME" "success"
-        else
-            unraid_notify "No files were moved/synced by Mover Tuning plugin. Elapsed time: $ELAPSED_TIME" "success"
+        # a name that had already gone is nothing to act on, so it raises no notification by itself
+        real_failed=$((NOTMOVEDFILES - VANISHEDFILES + NOTMOVEDFOLDERS - VANISHEDFOLDERS))
+        if [ $((MOVEDFILES + MOVEDFOLDERS)) -gt 0 ]; then
+            unraid_notify "$(translate_text "A total of %s files and %s folders representing %s were successfully moved/synced by Mover Tuning plugin. Elapsed time: %s" "$MOVEDFILES" "$MOVEDFOLDERS" "$(bytes_to_human "$MOVEDSIZE")" "$ELAPSED_TIME")" "success"
+        elif [ "$real_failed" -eq 0 ]; then
+            unraid_notify "$(translate_text "No files were moved/synced by Mover Tuning plugin. Elapsed time: %s" "$ELAPSED_TIME")" "success"
+        fi
+        if [ $((NOTMOVEDFILES + NOTMOVEDFOLDERS)) -gt 0 ]; then
+            mvlogger "$NOTMOVEDFILES files and $NOTMOVEDFOLDERS folders representing $(bytes_to_human "$NOTMOVEDSIZE") could not be moved/synced, $((VANISHEDFILES + VANISHEDFOLDERS)) of them gone from the source before their turn."
+            [ "$real_failed" -gt 0 ] && unraid_notify "$(translate_text "%s files and %s folders representing %s could not be moved/synced by Mover Tuning plugin." "$NOTMOVEDFILES" "$NOTMOVEDFOLDERS" "$(bytes_to_human "$NOTMOVEDSIZE")")" "failure"
         fi
     fi
 

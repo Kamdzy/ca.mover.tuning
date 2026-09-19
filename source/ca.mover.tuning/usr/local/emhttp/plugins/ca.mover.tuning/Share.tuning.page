@@ -78,6 +78,12 @@ function mtFillRange(sel, from, to, step) {
   return keep ? '' : $sel.val();
 }
 
+// %1, %2... in a translated template are filled from the extra arguments.
+function mtFmt(tpl) {
+  var args = arguments;
+  return tpl.replace(/%(\d)/g, function(m, i) { return args[i]; });
+}
+
 function mtNotice(id, text) {
   var $n = $(id);
   if (!$n.length) return;
@@ -90,13 +96,13 @@ function mtRebuildThresholds(moving) {
   moving = parseInt(moving, 10) || 0;
 
   var freeing = mtFillRange('select[name="freeingThreshold"]', moving, 0, -5);
-  mtNotice('#freeing_notice', freeing ? 'Freeing threshold lowered to ' + freeing +
-    '% to stay at or below the moving threshold.' : '');
+  mtNotice('#freeing_notice', freeing ?
+    mtFmt('_(Freeing threshold lowered to %1 to stay at or below the moving threshold.)_', freeing + '%') : '');
 
   var $om = $('select[name="omoverthresh"]');
   var omover = mtFillRange($om, moving + 5, 100, 5);
   mtNotice('#omoverthresh_notice', (omover && !$om.prop('disabled')) ?
-    'Move All threshold raised to ' + omover + '% to stay above the moving threshold.' : '');
+    mtFmt('_(Move All threshold raised to %1 to stay above the moving threshold.)_', omover + '%') : '');
 }
 
 // A config saved before the ranges tracked each other can hold a combination this page cannot
@@ -104,20 +110,16 @@ function mtRebuildThresholds(moving) {
 function mtWarnSavedThresholds() {
   var msgs = [];
   if (mtSaved.freeing > mtSaved.moving) {
-    msgs.push('The saved freeing threshold is ' + mtSaved.freeing + '%, above the moving threshold of ' +
-      mtSaved.moving + '%. The mover starts at ' + mtSaved.moving + '% and stops at ' + mtSaved.freeing +
-      '%, so nothing is moved while the pool sits between them. This page now shows ' +
-      $('select[name="freeingThreshold"]').val() + '%, and saving will store that.');
+    msgs.push(mtFmt('_(The saved freeing threshold is %1, above the moving threshold of %2. The mover starts at %2 and stops at %1, so nothing is moved while the pool sits between them. This page now shows %3, and saving will store that.)_',
+      mtSaved.freeing + '%', mtSaved.moving + '%', $('select[name="freeingThreshold"]').val() + '%'));
   }
   if (mtSaved.omoverOn && mtSaved.omover !== null && mtSaved.omover <= mtSaved.moving) {
-    msgs.push('The saved Move All threshold is ' + mtSaved.omover + '%, at or below the moving threshold ' +
-      'of ' + mtSaved.moving + '%. Everything on cache:yes shares moves, skip list and filters ignored, ' +
-      'before the moving threshold is reached. This page now shows ' +
-      $('select[name="omoverthresh"]').val() + '%, and saving will store that.');
+    msgs.push(mtFmt('_(The saved Move All threshold is %1, at or below the moving threshold of %2. Everything on cache:yes shares moves, skip list and filters ignored, before the moving threshold is reached. This page now shows %3, and saving will store that.)_',
+      mtSaved.omover + '%', mtSaved.moving + '%', $('select[name="omoverthresh"]').val() + '%'));
   }
   if (!msgs.length) return;
   if (typeof swal === 'function') {
-    swal({title: 'Mover Tuning thresholds', text: msgs.join('\n\n'), type: 'warning', confirmButtonText: 'OK'});
+    swal({title: '_(Mover Tuning thresholds)_', text: msgs.join('\n\n'), type: 'warning', confirmButtonText: '_(OK)_'});
   } else {
     mtNotice('#freeing_notice', msgs.join(' '));
   }
@@ -149,21 +151,27 @@ $(function() {
 <input type="hidden" name="#file" value="<?=$shareCFG?>">
 
 <? if ($shareName != ""): ?>
+
 <? if (strpos($shareCfgText, 'shareUseCache="no"') !== false || strpos($shareCfgText, 'shareUseCache="only"') !== false): ?>
+
 <div markdown="1" class="shade-<?=$display['theme']?>">
-_(Mover Tuning settings not available for this share.)_
+_(Mover Tuning settings not available for this share)_.
 </div>
+
 <? elseif (strpos($shareCfgText, 'shareUseCache="prefer"') !== false): ?>
 
 <div markdown="1" class="shade-<?=$display['theme']?>">
 _(Override Mover Tuning settings for this share)_:
 : <select name="moverOverride" onchange="updateScreenMoverTuning(this.value, 'slow')">
-  <?= mk_option($cfg['moverOverride'], 'no', 'No') ?>
-  <?= mk_option($cfg['moverOverride'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['moverOverride'], 'no', _('No')) ?>
+  <?= mk_option($cfg['moverOverride'], 'yes', _('Yes')) ?>
   </select>
   
-<!--:mover_tuning_override_help:-->
+:mover_tune_moveroverride_plug:
+
 > Select **Yes** to override the primary Mover Tuning settings for this share.
+
+:end
 
 <div markdown="1" id="moverSettings">
 _(Fill up to this level of used Primary (<em>cache</em>) space)_:
@@ -173,20 +181,27 @@ _(Fill up to this level of used Primary (<em>cache</em>) space)_:
 <?endfor;?>
 </select>
 
+:mover_tune_fillupthreshold_plug:
+
 > Set to the amount of disk space used on the <strong><em>Secondary->Primary</em></strong> (cache:<strong>prefer</strong>) drive after the mover has completed its run. Setting this to (<strong><em>95%</em></strong>) means that the mover will continue until <strong><em>95%</em></strong> of the cache pool is filled.
+
+:end
 
 _(Move files to Primary (<em>cache</em>) based on age)_:
 : <select name="age" onchange='$(".myage").toggleAttr("disabled")'>
-  <?= mk_option($cfg['age'], 'no', 'No') ?>
-  <?= mk_option($cfg['age'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['age'], 'no', _('No')) ?>
+  <?= mk_option($cfg['age'], 'yes', _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_age_help:-->
+:mover_tune_share_age_prefer_plug:
+
 > Select **Yes** to move files to the Primary (cache) based on their age (in **days**).
+
+:end
 
 _(Only move files that are older than this (in days))_:
 : <select name="daysold" class='myage' <?= $ageDisabled ?>>
-  <?= mk_option($cfg['daysold'], -1, "Auto")?>
+  <?= mk_option($cfg['daysold'], -1, _('Auto'))?>
   <?= mk_option($cfg['daysold'], 1, "1") ?>
   <?= mk_option($cfg['daysold'], 2, "2") ?>
   <?= mk_option($cfg['daysold'], 3, "3") ?>
@@ -201,35 +216,47 @@ _(Only move files that are older than this (in days))_:
   <? endfor; ?>
   </select>
 
-<!--:mover_tuning_min_age_help:-->
+:mover_tune_share_daysold_plug:
+
 > Select the number of days old a file has to be in order to move (Up To 1 year). Auto will move from the oldest to the most recent, until threshold is met.
+
+:end
 
 _(Use CTIME)_:
 : <select name="ctime" class='myage ctime' <?= $ageDisabled ?> <?= $lockCtime ?> onchange='$(".atime").toggleAttr("disabled")'>
-  <?=mk_option($cfg['ctime'],'no','No')?>
-  <?=mk_option($cfg['ctime'],'yes','Yes')?>
+  <?=mk_option($cfg['ctime'],'no',_('No'))?>
+  <?=mk_option($cfg['ctime'],'yes',_('Yes'))?>
   </select>
 
-<!--:mover_tuning_ctime_help:-->
+:mover_tune_ctime_plug:
+
 > Use <strong>CTIME</strong> <em>( creation time )</em> instead of <strong>MTIME</strong> <em>( modification time )</em> in the find command.
+
+:end
 
 _(Use ATIME)_:
 : <select name="atime" class='myage atime' <?= $ageDisabled ?> <?= $lockAtime ?> onchange='$(".ctime").toggleAttr("disabled")'>
-  <?=mk_option($cfg['atime'],'no','No')?>
-  <?=mk_option($cfg['atime'],'yes','Yes')?>
+  <?=mk_option($cfg['atime'],'no',_('No'))?>
+  <?=mk_option($cfg['atime'],'yes',_('Yes'))?>
   </select>
 
-<!--:mover_tuning_atime_help:-->
+:mover_tune_atime_plug:
+
 > Use <strong>ATIME</strong> <em>( access time )</em> instead of <strong>MTIME</strong> <em>( modification time )</em> in the find command.
+
+:end
 
 _(Move files based on size)_:
 : <select name="sizef" onchange='$(".mysizef").toggleAttr("disabled")'>
-  <?= mk_option($cfg['sizef'], 'no', 'No') ?>
-  <?= mk_option($cfg['sizef'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['sizef'], 'no', _('No')) ?>
+  <?= mk_option($cfg['sizef'], 'yes', _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_size_help:-->
+:mover_tune_share_sizef_plug:
+
 > Select **Yes** to move files based on their file size.
+
+:end
 
 _(Only move files larger than this (in MB))_:
 : <select name="sizeinM" size="1" class='mysizef' <?= $sizefDisabled ?>>
@@ -244,23 +271,28 @@ _(Only move files larger than this (in MB))_:
   <?= mk_option($cfg['sizeinM'], 9, "9") ?>
   <?= mk_option($cfg['sizeinM'], 10, "10") ?>
   <?= mk_option($cfg['sizeinM'], 11, "11") ?>
-
   <? for ($ds = 12; $ds < 1026; $ds += 2): ?>
   <?= mk_option($cfg['sizeinM'], $ds, "$ds") ?>
   <? endfor; ?>
   </select>
 
-<!--:mover_tuning_min_size_help:-->
+:mover_tune_sizeinm_plug:
+
 > Select the minimum size a file has to be to get moved (in **Megabytes**).
+
+:end
 
 _(Move files based on sparseness)_:
 : <select name="sparsnessf" onchange='$(".mysparsnessf").toggleAttr("disabled")'>
-  <?= mk_option($cfg['sparsnessf'], 'no', 'No') ?>
-  <?= mk_option($cfg['sparsnessf'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['sparsnessf'], 'no', _('No')) ?>
+  <?= mk_option($cfg['sparsnessf'], 'yes', _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_sparseness_help:-->
+:mover_tune_share_sparsnessf_plug:
+
 > Select **Yes** to move files based on their sparseness.
+
+:end
 
 _(Move files that are greater than this sparseness)_:
 : <select name='sparsnessv' class='mysparsnessf' <?= $sparsnessfDisabled ?>>
@@ -275,47 +307,65 @@ _(Move files that are greater than this sparseness)_:
 	<?= mk_option($cfg['sparsnessv'], 9, "0.9") ?>
   </select>
 
-<!--:mover_tuning_min_sparseness_help:-->
+:mover_tune_share_sparsnessv_plug:
+
 > Select the minimum sparseness a file has to be to get moved.
+
+:end
 
 _(Skip files listed in text file)_:
 : <select name='filelistf' onchange='$(".myfilelistf").toggleAttr("disabled")'>
-  <?= mk_option($cfg['filelistf'], "no", 'No') ?>
-  <?= mk_option($cfg['filelistf'], "yes", "Yes") ?>
+  <?= mk_option($cfg['filelistf'], "no", _('No')) ?>
+  <?= mk_option($cfg['filelistf'], "yes", _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_file_list_help:-->
+:mover_tune_filelistf_plug:
+
 > Select **Yes** to skip files which have been listed in a specified text file.
+
+:end
 
 _(File list path)_:
 : <input type='text' name='filelistv' class='myfilelistf' value='<?=htmlspecialchars($cfg['filelistv'], ENT_QUOTES | ENT_SUBSTITUTE)?>' <?= $filelistfDisabled ?>>
 
-<!--:mover_tuning_file_list_path_help:-->
+:mover_tune_share_filelistv_plug:
+
 > Specify the full path to a text file that contains the list of files the mover should skip.
+
+:end
 
 _(Skip file types)_:
 : <select name='filetypesf' onchange='$(".myfiletypesf").toggleAttr("disabled")'>
-  <?= mk_option($cfg['filetypesf'], "no", 'No') ?>
-  <?= mk_option($cfg['filetypesf'], "yes", "Yes") ?>
+  <?= mk_option($cfg['filetypesf'], "no", _('No')) ?>
+  <?= mk_option($cfg['filetypesf'], "yes", _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_file_type_help:-->
+:mover_tune_filetypesf_plug:
+
 > Select **Yes** to skip specific file types in addition to those selected globally.
+
+:end
 
 _(Comma separated list of file types)_:
 : <input type='text' name='filetypesv' class='myfiletypesf' value='<?=htmlspecialchars($cfg['filetypesv'], ENT_QUOTES | ENT_SUBSTITUTE)?>' <?= $filetypesfDisabled ?>>
 
-<!--:mover_tuning_file_type_delimited_help:-->
+:mover_tune_share_filetypesv_plug:
+
 > Specify the file types to be skipped, separated by a comma (e.g. **".txt,.mp3,.pdf"**).
+
+:end
 
 _(Ignore All hidden files and directories)_:
 : <select name='ignoreHidden'>
-  <?= mk_option($cfg['ignoreHidden'], "no", "No") ?>
-  <?= mk_option($cfg['ignoreHidden'], "yes", "Yes") ?>
+  <?= mk_option($cfg['ignoreHidden'], "no", _('No')) ?>
+  <?= mk_option($cfg['ignoreHidden'], "yes", _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_hidden_files_help:-->
+:mover_tune_share_ignorehidden_plug:
+
 > Select **Yes** to skip all hidden files and directories (starting with **"."**).
+
+:end
 
 </div>
 </div>
@@ -330,7 +380,11 @@ _(Ignore All hidden files and directories)_:
 _(Move **ALL** files to current pool (won't use mover settings))_:
 : <span><input type="button" id="MoveShare" value="_(Move Now)_" onclick="moveShareNow()"></span>
 
+:mover_tune_share_moveshare_prefer_plug:
+
 > Clicking the **Move Now** button will invoke the **unraid mover** specifically for this share. It will move the entire share **_Secondary->Primary_** storage space, disregarding any existing mover settings.
+
+:end
 </div>
 
 <? elseif (strpos($shareCfgText, 'shareUseCache="yes"') !== false): ?>
@@ -338,12 +392,15 @@ _(Move **ALL** files to current pool (won't use mover settings))_:
 <div markdown="1" class="shade-<?=$display['theme']?>">
 _(Override Mover Tuning settings for this share)_:
 : <select name="moverOverride" onchange="updateScreenMoverTuning(this.value, 'slow')">
-  <?= mk_option($cfg['moverOverride'], 'no', 'No') ?>
-  <?= mk_option($cfg['moverOverride'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['moverOverride'], 'no', _('No')) ?>
+  <?= mk_option($cfg['moverOverride'], 'yes', _('Yes')) ?>
   </select>
   
-<!--:mover_tuning_override_help:-->
+:mover_tune_moveroverride_plug:
+
 > Select **Yes** to override the primary Mover Tuning settings for this share.
+
+:end
 
 <div markdown="1" id="moverSettings">
 _(Only move if above this threshold of used Primary (<em>cache</em>) space)_:
@@ -353,7 +410,11 @@ _(Only move if above this threshold of used Primary (<em>cache</em>) space)_:
 <?endfor;?>
 </select>
 
+:mover_tune_share_movingthreshold_plug:
+
 > Set to the amount of disk space used on the <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) drive for mover to run. When this threshold is reached, the mover will start running to move data off the cache pool.
+
+:end
 
 _(Free down to this level of used Primary (<em>cache</em>) space)_:
 : <select name="freeingThreshold" size="1" onchange='mtNotice("#freeing_notice","")'>
@@ -363,20 +424,27 @@ _(Free down to this level of used Primary (<em>cache</em>) space)_:
 </select>
 <span id="freeing_notice" class="orange-text" style="display:none; font-style:italic;"></span>
 
+:mover_tune_share_freeingthreshold_plug:
+
 > Set to the amount of disk space used on the <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) drive after the mover has completed its run. Setting this to (<strong><em> 0% </em></strong>) means that the mover will continue until all data is moved off the cache pool.
+
+:end
 
 _(Move files off Primary (<em>cache</em>) based on age)_:
 : <select name="age" onchange='$(".myage").toggleAttr("disabled")'>
-  <?= mk_option($cfg['age'], 'no', 'No') ?>
-  <?= mk_option($cfg['age'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['age'], 'no', _('No')) ?>
+  <?= mk_option($cfg['age'], 'yes', _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_age_help:-->
+:mover_tune_share_age_yes_plug:
+
 > Select **Yes** to move files off of the Primary (cache) based on their age (in **days**).
+
+:end
 
 _(Only move files that are older than this (in days))_:
 : <select name="daysold" class='myage' <?= $ageDisabled ?>>
-  <?= mk_option($cfg['daysold'], -1, "Auto")?>
+  <?= mk_option($cfg['daysold'], -1, _('Auto'))?>
   <?= mk_option($cfg['daysold'], 1, "1") ?>
   <?= mk_option($cfg['daysold'], 2, "2") ?>
   <?= mk_option($cfg['daysold'], 3, "3") ?>
@@ -391,35 +459,47 @@ _(Only move files that are older than this (in days))_:
   <? endfor; ?>
   </select>
 
-<!--:mover_tuning_min_age_help:-->
+:mover_tune_share_daysold_plug:
+
 > Select the number of days old a file has to be in order to move (Up To 1 year). Auto will move from the oldest to the most recent, until threshold is met.
+
+:end
 
 _(Use CTIME)_:
 : <select name="ctime" class='myage ctime' <?= $ageDisabled ?> <?= $lockCtime ?> onchange='$(".atime").toggleAttr("disabled")'>
-  <?=mk_option($cfg['ctime'],'no','No')?>
-  <?=mk_option($cfg['ctime'],'yes','Yes')?>
+  <?=mk_option($cfg['ctime'],'no',_('No'))?>
+  <?=mk_option($cfg['ctime'],'yes',_('Yes'))?>
   </select>
 
-<!--:mover_tuning_ctime_help:-->
+:mover_tune_ctime_plug:
+
 > Use <strong>CTIME</strong> <em>( creation time )</em> instead of <strong>MTIME</strong> <em>( modification time )</em> in the find command.
+
+:end
 
 _(Use ATIME)_:
 : <select name="atime" class='myage atime' <?= $ageDisabled ?> <?= $lockAtime ?> onchange='$(".ctime").toggleAttr("disabled")'>
-  <?=mk_option($cfg['atime'],'no','No')?>
-  <?=mk_option($cfg['atime'],'yes','Yes')?>
+  <?=mk_option($cfg['atime'],'no',_('No'))?>
+  <?=mk_option($cfg['atime'],'yes',_('Yes'))?>
   </select>
 
-<!--:mover_tuning_atime_help:-->
+:mover_tune_atime_plug:
+
 > Use <strong>ATIME</strong> <em>( access time )</em> instead of <strong>MTIME</strong> <em>( modification time )</em> in the find command.
+
+:end
 
 _(Move files based on size)_:
 : <select name="sizef" onchange='$(".mysizef").toggleAttr("disabled")'>
-  <?= mk_option($cfg['sizef'], 'no', 'No') ?>
-  <?= mk_option($cfg['sizef'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['sizef'], 'no', _('No')) ?>
+  <?= mk_option($cfg['sizef'], 'yes', _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_size_help:-->
+:mover_tune_share_sizef_plug:
+
 > Select **Yes** to move files based on their file size.
+
+:end
 
 _(Only move files larger than this (in MB))_:
 : <select name="sizeinM" size="1" class='mysizef' <?= $sizefDisabled ?>>
@@ -434,22 +514,28 @@ _(Only move files larger than this (in MB))_:
   <?= mk_option($cfg['sizeinM'], 9, "9") ?>
   <?= mk_option($cfg['sizeinM'], 10, "10") ?>
   <?= mk_option($cfg['sizeinM'], 11, "11") ?>
-
   <? for ($ds = 12; $ds < 1026; $ds += 2): ?>
   <?= mk_option($cfg['sizeinM'], $ds, "$ds") ?>
   <? endfor; ?>
   </select>
 
-<!--:mover_tuning_min_size_help:-->
+:mover_tune_sizeinm_plug:
+
 > Select the minimum size a file has to be to get moved (in **Megabytes**).
+
+:end
 
 _(Sync files based on maximum size)_?
 : <select name="sizefSync" size='1' onchange='$(".mysizefSync").toggleAttr("disabled")'>
-       <?=mk_option($cfg['sizefSync'],'no','No')?>
-       <?=mk_option($cfg['sizefSync'],'yes','Yes')?>
+       <?=mk_option($cfg['sizefSync'],'no',_('No'))?>
+       <?=mk_option($cfg['sizefSync'],'yes',_('Yes'))?>
 </select>
 
+:mover_tune_sizefsync_plug:
+
 > Select <strong>yes</strong> if you want to sync files based on their size in <strong>MB</strong>. This option is only applicable when the Synchronize or Resynchronize feature is enabled.
+
+:end
 
 _(Sync files that are smaller than this size (In MB))_.
 : <select name="sizeinMSync" size="1" class='mysizefSync' <?=$sizefSyncDisabled?>>
@@ -464,22 +550,28 @@ _(Sync files that are smaller than this size (In MB))_.
   <?=mk_option($cfg['sizeinMSync'], 9, "9")?>
   <?=mk_option($cfg['sizeinMSync'], 10, "10")?>
   <?=mk_option($cfg['sizeinMSync'], 11, "11")?>
-
 	<?for ($ds=12;$ds<1026;$ds+=2):?>
 		<?=mk_option($cfg['sizeinMSync'], $ds, "$ds")?>
 	<?endfor;?>
 </select>
 
+:mover_tune_sizeinmsync_plug:
+
 > Select the maximum size a file has to be to get synched (in **Megabytes**).
+
+:end
 
 _(Move files based on sparseness)_:
 : <select name="sparsnessf" onchange='$(".mysparsnessf").toggleAttr("disabled")'>
-  <?= mk_option($cfg['sparsnessf'], 'no', 'No') ?>
-  <?= mk_option($cfg['sparsnessf'], 'yes', 'Yes') ?>
+  <?= mk_option($cfg['sparsnessf'], 'no', _('No')) ?>
+  <?= mk_option($cfg['sparsnessf'], 'yes', _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_sparseness_help:-->
+:mover_tune_share_sparsnessf_plug:
+
 > Select **Yes** to move files based on their sparseness.
+
+:end
 
 _(Move files that are greater than this sparseness)_:
 : <select name='sparsnessv' class='mysparsnessf' <?= $sparsnessfDisabled ?>>
@@ -494,57 +586,77 @@ _(Move files that are greater than this sparseness)_:
 	<?= mk_option($cfg['sparsnessv'], 9, "0.9") ?>
   </select>
 
-<!--:mover_tuning_min_sparseness_help:-->
+:mover_tune_share_sparsnessv_plug:
+
 > Select the minimum sparseness a file has to be to get moved.
+
+:end
 
 _(Skip files listed in text file)_:
 : <select name='filelistf' onchange='$(".myfilelistf").toggleAttr("disabled")'>
-  <?= mk_option($cfg['filelistf'], "no", 'No') ?>
-  <?= mk_option($cfg['filelistf'], "yes", "Yes") ?>
+  <?= mk_option($cfg['filelistf'], "no", _('No')) ?>
+  <?= mk_option($cfg['filelistf'], "yes", _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_file_list_help:-->
+:mover_tune_filelistf_plug:
+
 > Select **Yes** to skip files which have been listed in a specified text file.
+
+:end
 
 _(File list path)_:
 : <input type='text' name='filelistv' class='myfilelistf' value='<?=htmlspecialchars($cfg['filelistv'], ENT_QUOTES | ENT_SUBSTITUTE)?>' <?=$filelistfDisabled?>>
 
-<!--:mover_tuning_file_list_path_help:-->
+:mover_tune_share_filelistv_plug:
+
 > Specify the full path to a text file that contains the list of files the mover should skip.
+
+:end
 
 _(Skip file types)_:
 : <select name='filetypesf' onchange='$(".myfiletypesf").toggleAttr("disabled")'>
-  <?= mk_option($cfg['filetypesf'], "no", 'No') ?>
-  <?= mk_option($cfg['filetypesf'], "yes", "Yes") ?>
+  <?= mk_option($cfg['filetypesf'], "no", _('No')) ?>
+  <?= mk_option($cfg['filetypesf'], "yes", _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_file_type_help:-->
+:mover_tune_filetypesf_plug:
+
 > Select **Yes** to skip specific file types in addition to those selected globally.
+
+:end
 
 _(Comma separated list of file types)_:
 : <input type='text' name='filetypesv' class='myfiletypesf' value='<?=htmlspecialchars($cfg['filetypesv'], ENT_QUOTES | ENT_SUBSTITUTE)?>' <?=$filetypesfDisabled?>>
 
-<!--:mover_tuning_file_type_delimited_help:-->
+:mover_tune_share_filetypesv_plug:
+
 > Specify the file types to be skipped, separated by a comma (e.g. **".txt,.mp3,.pdf"**).
+
+:end
 
 _(Ignore All hidden files and directories)_:
 : <select name='ignoreHidden'>
-  <?= mk_option($cfg['ignoreHidden'], "no", "No") ?>
-  <?= mk_option($cfg['ignoreHidden'], "yes", "Yes") ?>
+  <?= mk_option($cfg['ignoreHidden'], "no", _('No')) ?>
+  <?= mk_option($cfg['ignoreHidden'], "yes", _('Yes')) ?>
   </select>
 
-<!--:mover_tuning_hidden_files_help:-->
+:mover_tune_share_ignorehidden_plug:
+
 > Select **Yes** to skip all hidden files and directories (starting with **"."**).
+
+:end
 
 _(Move All from Primary->Secondary (cache:yes) shares when disk is above a certain percentage)_:
 : <select name='omovercfg' size='1' onchange='$(".myomthresh").toggleAttr("disabled")'>
-<?=mk_option($cfg['omovercfg'],"no","No")?>
-<?=mk_option($cfg['omovercfg'],"yes","Yes")?>
+<?=mk_option($cfg['omovercfg'],"no",_('No'))?>
+<?=mk_option($cfg['omovercfg'],"yes",_('Yes'))?>
 </select>
 
 <blockquote class="inline_help">
+:mover_tune_omovercfg_plug:
 <p>Set to <strong>Yes</strong> if you want to move all files from a <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) share to the array if the percentage below is exceeded.</p>
 <p>This is similar to the original mover and does not apply any filters from this plug-in to the find command sent to the mover binary.</p>
+:end
 </blockquote>
 
 _(Move All from Primary->Secondary (cache:yes) shares pool percentage)_:
@@ -556,18 +668,21 @@ _(Move All from Primary->Secondary (cache:yes) shares pool percentage)_:
 <span id="omoverthresh_notice" class="orange-text" style="display:none; font-style:italic;"></span>
 
 <blockquote class="inline_help">
+:mover_tune_omoverthresh_plug:
 <p>Set to the amount of disk space used on the Primary pool to initiate a move of all files in a <strong><em>Primary->Secondary</em></strong> (cache:<strong>yes</strong>) share.</p>
 <p>Filters will still run after, for any remaining pool's that do not meet this threshold.</p>
 <p>This threshold should at a minimum be <strong>5%</strong> larger than <strong><em>Only move at this threshold of used primary (cache) space</em></strong> setting above.</p>
+:end
 </blockquote>
 
 _(Synchronize Primary files to Secondary)_:
 : <select name='synchronizeCache' size='1'>
-<?=mk_option($cfg['synchronizeCache'],"no",'No')?>
-<?=mk_option($cfg['synchronizeCache'],"yes","Yes")?>
+<?=mk_option($cfg['synchronizeCache'],"no",_('No'))?>
+<?=mk_option($cfg['synchronizeCache'],"yes",_('Yes'))?>
 </select>
 
 <blockquote class="inline_help">
+:mover_tune_synchronizecache_plug:
 <p>This will synchronize the Primary (cached) files on both Primary and Secondary (array) so they are backed up and parity protected.</p>
 <p>Reading and modification will still occur on Primary. Sync files based on maximum size optionally can be used.</p>
 <p><u>Note:</u></p>
@@ -575,6 +690,7 @@ _(Synchronize Primary files to Secondary)_:
   <li><strong>ONLY modified files</strong> since the last sync are <strong>synchronized</strong>.</li>
   <li><strong>ONLY files</strong> on the cache pool <strong>below</strong> moving and freeing thresholds can be <strong>synchronized</strong>.</li>
 </ul>
+:end
 </blockquote>
 
 </div>
@@ -590,16 +706,25 @@ _(Synchronize Primary files to Secondary)_:
 _(Move **ALL** files from current pool (won't use mover settings))_:
 : <span><input type="button" id="MoveShare" value="_(Move Now)_" onclick="moveShareNow()"></span>
 
+:mover_tune_share_moveshare_yes_plug:
+
 > Clicking the **Move Now** button will invoke the **unraid mover** specifically for this share. It will move the entire share **_Primary->Secondary_** storage space, disregarding any existing mover settings.
+
+:end
 </div>
 
 <? else: ?>
+
 <div markdown="1" class="shade-<?=$display['theme']?>">
 _(Mover Tuning settings not available for this share)_.
 </div>
+
 <? endif; ?>
+
 <? else: ?>
+
 _(Not Applicable (Share Does Not Exist Yet))_!
+
 <? endif; ?>
 
 </form>
