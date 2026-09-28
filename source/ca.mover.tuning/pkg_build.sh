@@ -23,6 +23,20 @@ mkdir -p $tmpdir
 update_content="$(dirname "$(dirname "$DIR")")/.updates.txt"
 [ -s "$update_content" ] || { echo "Missing release notes: $update_content" >&2; exit 1; }
 
+# Refuse a version that Unraid would offer but Slackware would not install. The plugin
+# manager compares versions with strcmp; upgradepkg compares whole package names with
+# sort -V, which ranks a letter below "-". So a same-day 2026.09.28 -> 2026.09.28a is
+# "newer" to Unraid and "older" to upgradepkg: the version is stamped, the package is
+# silently skipped, and the box reports the new version while running the old code.
+# This happened at 2026.09.10 -> 10a and 2026.09.28 -> 28a. Use the next date instead.
+last=$(sed -n 's/^<!ENTITY version *"\([^"]*\)">.*/\1/p' "$config_file")
+if [ -n "$last" ]; then
+  [ "$version" != "$last" ] && [ "$(printf '%s\n%s\n' "$last" "$version" | LC_ALL=C sort | tail -1)" = "$version" ] ||
+    { echo "Version $version is not newer than $last to Unraid (strcmp)" >&2; exit 1; }
+  printf '%s\n%s' "$plugin-$last-x86_64-1" "$plugin-$version-x86_64-1" | sort -V -C ||
+    { echo "Version $version is not newer than $last to upgradepkg (sort -V): it would be stamped but not installed" >&2; exit 1; }
+fi
+
 # Step 0: Change to current version in $default_config_file
 sed -i "s/version=.*/version=\"$version\"/" "$default_config_file"
 
