@@ -35,6 +35,10 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.09.28a
+    - fix: When every disk in a Disk Priority Mapping is full and the mapping already lists every array disk, the files stay on the cache with a single log line, instead of each one failing with "No space left on device". Mappings that list only some disks still fall back to the rest of the array.
+
+
 - 2026.09.28
     - new: Merged upstream masterwishx 2026.09.28. Files that a process has open, including memory-mapped files, are left on the cache instead of being moved (setting "Move files that are in use", off by default). **_(masterwishx, chodeus)_**
     - new: Every file is checked after the transfer, so the failure notice lists only files that really did not arrive. Files that disappear before their turn are no longer reported as rsync errors.
