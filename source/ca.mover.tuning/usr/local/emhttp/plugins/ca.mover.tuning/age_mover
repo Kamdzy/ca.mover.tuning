@@ -1927,7 +1927,10 @@ decideMoveActions() {
 
     awk -F"|" -v AGE="$AGE" -v STATS_FILE="$STATS_FILE" -v LASTCACHESYNC="$LASTCACHESYNC" -v SOFTSTOPFILE="$SOFTSTOPFILE" -v MOVERTUNING_OVERRIDE_CFGFOLDER="$MOVERTUNING_OVERRIDE_CFGFOLDER" -v SYNCHRONIZECACHE="$SYNCHRONIZECACHE" -v REBALANCESHARES="$REBALANCESHARES" -v RESYNCHRONIZECACHE="$RESYNCHRONIZECACHE" -v PRIORITY_MAPPINGS="$PRIORITY_MAPPINGS" -v IGNORE_LIST="$IGNORE_LIST" -v HELD_FILELIST="$HELD_FILELIST" '
         # Function to get priority destination for a file path
-        function getPriorityDestination(file_path, file_size, default_dest) {
+        # keep_if_full is optional: only the "move from primary" caller passes it. With it set,
+        # a file whose mapping covers every array disk and whose disks are all full gets "KEEP"
+        # back instead of default_dest (see below). The other callers keep the old fallback.
+        function getPriorityDestination(file_path, file_size, default_dest, keep_if_full,    mapped_disk, covered, ad, ls_cmd, d) {
             if (PRIORITY_MAPPINGS == "") {
                 return default_dest
             }
@@ -1957,6 +1960,7 @@ decideMoveActions() {
                         for (j = 1; j <= n_disks; j++) {
                             disk_name = disks[j]
                             gsub(/^ +| +$/, "", disk_name)
+                            mapped_disk[disk_name] = 1
                             disk_path = "/mnt/" disk_name
                             
                             # Get current available space for this disk
@@ -1987,7 +1991,27 @@ decideMoveActions() {
                             }
                         }
                         
-                        # No priority disks had sufficient space, return default
+                        # No priority disk had room. The fallback hands the file to the array
+                        # (default_dest, /mnt/user0) and lets Unraid pick a disk. But when this
+                        # mapping already lists every array disk, "none fits" means the array is
+                        # full: Unraid has nowhere better, and every such file became a failed
+                        # rsync (No space left on device, about 3600 in one week on the
+                        # maintainer box). Keep those on the primary instead. A mapping that
+                        # covers only some disks keeps the fallback, since another disk may fit.
+                        if (keep_if_full != "") {
+                            if (!array_disks_loaded) {
+                                array_disks_loaded = 1
+                                ls_cmd = "ls -d /mnt/disk[0-9]* 2>/dev/null"
+                                while ((ls_cmd | getline d) > 0) {
+                                    sub(/^\/mnt\//, "", d)
+                                    if (d ~ /^disk[0-9]+$/) { array_disk[d] = 1; n_array_disks++ }
+                                }
+                                close(ls_cmd)
+                            }
+                            covered = (n_array_disks > 0)
+                            for (ad in array_disk) if (!(ad in mapped_disk)) { covered = 0; break }
+                            if (covered) return "KEEP"
+                        }
                         return default_dest
                     }
                 }
@@ -2183,14 +2207,23 @@ decideMoveActions() {
                     # accounting and is the ONLY decrement in the file -- without it the
                     # threshold gate never closes.
                     # (No apostrophes here: this awk body is a single-quoted shell string.)
-                    destination = getPriorityDestination(full_path(), $8, "/mnt/" $2)
-                    net_delta[$1] -= $8
-                    if ($12 == "d") {
-                        pool_stats[$1]["folders_from_primary"] += 1
+                    destination = getPriorityDestination(full_path(), $8, "/mnt/" $2, 1)
+                    if (destination == "KEEP") {
+                        # every disk in its mapping is full: stays on the primary, frees nothing,
+                        # so no net_delta decrement and no move statistics
+                        action = "keep on primary"
+                        destination = "none"
+                        kept_full++
+                        kept_full_bytes += $8
                     } else {
-                        pool_stats[$1]["files_from_primary"] += 1
+                        net_delta[$1] -= $8
+                        if ($12 == "d") {
+                            pool_stats[$1]["folders_from_primary"] += 1
+                        } else {
+                            pool_stats[$1]["files_from_primary"] += 1
+                        }
+                        pool_stats[$1]["total_size_from_primary"] += $8
                     }
-                    pool_stats[$1]["total_size_from_primary"] += $8
                 }
             } else {
                 if (storage_pool == "user" || ($2 == "user0" && storage_pool ~ /^disk[0-9]+$/)) {
@@ -2301,6 +2334,10 @@ decideMoveActions() {
                 printf("%s|%d|%d|%d|%d|%d|%d|%d|%d|%d\n", poolname, files_from_primary, size_from_primary, folders_from_primary, files_from_secondary, size_from_secondary, folders_from_secondary, files_from_unattended, size_from_unattended, folders_from_unattended) >> "'"${STATS_FILE}"'"
             }
 
+            # Fork: files kept because every disk in their priority mapping is full.
+            # Beside STATS_FILE so the awk -v list stays as it is; bash logs it below.
+            printf "%d|%d\n", kept_full, kept_full_bytes > (STATS_FILE ".full")
+
             # Print overall totals to stats file
             printf("TOTAL|%d|%d|%d|%d|%d|%d|%d|%d|%d\n", total_files_from_primary, total_size_from_primary, total_folders_from_primary, total_files_from_secondary, total_size_from_secondary, total_folders_from_secondary, total_files_from_unattended, total_size_from_unattended, total_folders_from_unattended) >> "'"${STATS_FILE}"'"
 
@@ -2316,6 +2353,13 @@ decideMoveActions() {
         TOTALSECONDARYFILES TOTALSECONDARYSIZE TOTALSECONDARYFOLDERS \
         TOTALUNATTENDEDFILES TOTALUNATTENDEDSIZE TOTALUNATTENDEDFOLDERS \
         <<<"$(awk -F'|' '$1 == "TOTAL"' "$STATS_FILE")"
+
+    # Fork: one line for files kept because every disk in their priority mapping is full,
+    # instead of a failed rsync per file (see getPriorityDestination)
+    if [ -s "$STATS_FILE.full" ] && IFS='|' read -r KEPTFULLFILES KEPTFULLSIZE <"$STATS_FILE.full" && [ "${KEPTFULLFILES:-0}" -gt 0 ]; then
+        mvlogger "$KEPTFULLFILES files representing $(bytes_to_human "$KEPTFULLSIZE") stay where they are: every disk in their priority mapping is full"
+    fi
+    rm -f "$STATS_FILE.full"
 
     # Add total files and size
     TOTALFILES=$((TOTALPRIMARYFILES + TOTALSECONDARYFILES + TOTALUNATTENDEDFILES))
