@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2026.09.19">
-<!ENTITY md5       "cba1182f5c1c7f22145bfab6dc95036b">
+<!ENTITY version   "2026.09.28">
+<!ENTITY md5       "16ca0b78f910d06cd57876006a1e7cd6">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,14 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2026.09.28
+- new: Merged upstream masterwishx 2026.09.28. Files that a process has open, including memory-mapped files, are left on the cache instead of being moved (setting "Move files that are in use", off by default). **_(masterwishx, chodeus)_**
+- new: Every file is checked after the transfer, so the failure notice lists only files that really did not arrive. Files that disappear before their turn are no longer reported as rsync errors.
+- new: German, French and Simplified Chinese translations (from upstream).
+- fix: The forced move schedule runs Unraid's own mover again, now with its own parity option, turbo write and priorities. Upstream's version would have started Mover Tuning on this build.
+- fix: Updating the plugin while the mover is running no longer stops the install halfway.
+
+
 ###2026.09.19
 - new: The plugin interface can now be translated, and a Russian translation is included (from upstream).
 - new: Hardlinked files are handed to the Unraid move utility as a complete group, so a set of hardlinks is no longer skipped when only part of it was selected for one run.

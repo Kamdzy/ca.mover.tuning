@@ -35,6 +35,14 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.09.28
+    - new: Merged upstream masterwishx 2026.09.28. Files that a process has open, including memory-mapped files, are left on the cache instead of being moved (setting "Move files that are in use", off by default). **_(masterwishx, chodeus)_**
+    - new: Every file is checked after the transfer, so the failure notice lists only files that really did not arrive. Files that disappear before their turn are no longer reported as rsync errors.
+    - new: German, French and Simplified Chinese translations (from upstream).
+    - fix: The forced move schedule runs Unraid's own mover again, now with its own parity option, turbo write and priorities. Upstream's version would have started Mover Tuning on this build.
+    - fix: Updating the plugin while the mover is running no longer stops the install halfway.
+
+
 - 2026.09.19
     - new: The plugin interface can now be translated, and a Russian translation is included (from upstream).
     - new: Hardlinked files are handed to the Unraid move utility as a complete group, so a set of hardlinks is no longer skipped when only part of it was selected for one run.
