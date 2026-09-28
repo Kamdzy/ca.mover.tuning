@@ -118,13 +118,13 @@ function make_tune_cron()
 	}
 }
 
-// Cron for forced move (unraid mover)
+// Cron for forced move: mover.php force applies its parity option, then runs Unraid's mover
 function make_cron()
 {
-	// Always mover.old: on this fork /usr/local/sbin/mover IS the plugin wrapper on
-	// every Unraid version, so upstream's >=7.2.1 branch would make this "forced move,
-	// ignores plugin filters" schedule call the plugin recursively.
-	$mover = '/usr/local/sbin/mover.old';
+	// Fork: the forced move must run the native mover.old, never /usr/local/sbin/mover
+	// (the plugin wrapper on this fork, on every Unraid version). Since the 2026.09.28
+	// merge that choice is made in mover.php forceMove(), not here: this schedule only
+	// ever calls "mover.php force start".
 	$cron = trim(post_string('cron'));
 	if (empty($cron)) {
 		logger("Error: No cron schedule provided for forced move.");
@@ -134,7 +134,7 @@ function make_cron()
 		logger("Error: Invalid cron schedule for forced move: " . preg_replace('/[^[:print:]]/', '?', $cron));
 		return;
 	}
-	$cronFile = "# Generated schedule for forced move:\n{$cron} {$mover} start |& logger -t move\n\n";
+	$cronFile = "# Generated schedule for forced move:\n{$cron} /usr/local/emhttp/plugins/ca.mover.tuning/mover.php force start |& logger -t move\n\n";
 	if (file_put_contents("/boot/config/plugins/ca.mover.tuning/mover.cron", $cronFile) === false) {
 		logger("Error: Failed to write forced mover.cron file.");
 	}

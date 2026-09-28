@@ -530,6 +530,11 @@ If an error occurs in copying a file, the partial file, if present, is deleted a
 
 You can download and install plugins with [Community Apps](https://unraid.net/community/apps/c/plugins).
 
+Or paste a URL into Plugins > Install Plugin:
+
+- Stable: `https://raw.githubusercontent.com/masterwishx/ca.mover.tuning/master/plugins/ca.mover.tuning.plg`
+- Beta, for trying changes before they reach the stable release: `https://raw.githubusercontent.com/masterwishx/ca.mover.tuning/beta/plugins/ca.mover.tuning.plg`
+
 ## Configuration
 
 You'll find its settings within Settings - [Scheduler](https://docs.unraid.net/unraid-os/manual/additional-settings/#scheduler).
@@ -560,4 +565,4 @@ This was originally created by [Squid](https://github.com/Squidly271).
 
 @2025 – Updated by [masterwishx](https://github.com/masterwishx/ca.mover.tuning).
 
-@2026 – Updated by [masterwishx](https://github.com/masterwishx/ca.mover.tuning), with contributions by [chodeus](https://github.com/chodeus), [Joly0](https://github.com/Joly0).
+@2026 – Updated by [masterwishx](https://github.com/masterwishx/ca.mover.tuning) and [chodeus](https://github.com/chodeus), with contributions by [Joly0](https://github.com/Joly0).

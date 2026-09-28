@@ -26,6 +26,11 @@ update_content="$(dirname "$(dirname "$DIR")")/.updates.txt"
 # Step 0: Change to current version in $default_config_file
 sed -i "s/version=.*/version=\"$version\"/" "$default_config_file"
 
+# From upstream (2026.09.28 merge): package from the script dir whatever the cwd, so
+# a run from anywhere else cannot package the wrong tree. The rest of upstream's new
+# pkg_build.sh was NOT taken: it writes to dist/ (which upstream gitignores) and drops
+# the .updates.txt changelog, while this fork serves packages from archive/.
+cd "$DIR"
 # *pkg_build.sh so local wrappers (custom_pkg_build.sh) are excluded too --
 # they are not part of the plugin and would install to the filesystem root.
 find . -type f ! \( -iname "*pkg_build.sh" -o -iname "sftp-config.json" \) -exec cp --parents -f -t "$tmpdir/" {} +

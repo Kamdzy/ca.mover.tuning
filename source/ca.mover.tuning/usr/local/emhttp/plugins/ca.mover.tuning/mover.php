@@ -7,6 +7,8 @@ $vars = @parse_ini_file("/var/local/emhttp/var.ini");
 $cron = $argv[1] == "crond";
 $bash = $argv[1] == "bash";
 $args = [];
+// the forced-move schedule (updateCron.php make_cron) calls: mover.php force start
+$force = ($argv[1] ?? "") === "force";
 
 // Read-only status check (no state change, no CSRF risk)
 if (!empty($_GET['check'])) {
@@ -61,6 +63,71 @@ function runMover($cmd)
     // not race a mover that has not started yet.
     for ($i = 0; $i < 50 && file_exists("/var/run/mover.pid") === false; $i++) {
         usleep(100000);
+    }
+}
+
+/**
+ * Nice level and ionice class from the two priority dropdowns, or the defaults for any other value.
+ *
+ * @return array{0: string, 1: string} [niceLevel, ioLevel]
+ */
+function moverPriority()
+{
+    global $cfg;
+
+    $allowedIO = ["-c 2 -n 0", "-c 2 -n 7", "-c 3"];
+    $niceLevel = (string) (int) ($cfg['moverNice'] ?? 0);
+    $ioLevel = in_array($cfg['moverIO'] ?? "", $allowedIO, true) === true ? $cfg['moverIO'] : "-c 2 -n 0";
+    return [$niceLevel, $ioLevel];
+}
+
+// Keep each command literal: a command built from a variable is flagged by the code scanner.
+function setWriteMethod($method)
+{
+    if ($method === "1") {
+        exec("/usr/local/sbin/mdcmd set md_write_method 1");
+    } elseif ($method === "0") {
+        exec("/usr/local/sbin/mdcmd set md_write_method 0");
+    } elseif ($method === "auto") {
+        exec("/usr/local/sbin/mdcmd set md_write_method auto");
+    }
+}
+
+// The forced move runs Unraid's own mover on its own schedule, without the plugin's filters or the Mover Tuning
+// schedule and parity settings. Its own parity option, the two priorities and turbo write apply to it.
+function forceMove()
+{
+    global $vars, $cfg;
+
+    if ($cfg['forceParity'] !== "yes" && empty($vars['mdResyncPos']) === false) {
+        logger("Parity Check / Rebuild in Progress.  Not running forced move");
+        return;
+    }
+    clearstatcache();
+    if (file_exists("/var/run/mover.pid") === true) {
+        logger("Mover already running");
+        return;
+    }
+    // Fork: always mover.old. Upstream uses /usr/local/sbin/mover from Unraid 7.2.1 on,
+    // where upstream restores the native binary there. This fork installs its plugin
+    // wrapper as /usr/local/sbin/mover on EVERY Unraid version and keeps the native one
+    // as mover.old, so upstream's choice would turn "forced move, Unraid mover, no plugin
+    // filters" into an ordinary Mover Tuning run via wrapper -> mover.php -> age_mover.
+    $mover = "/usr/local/sbin/mover.old";
+    [$niceLevel, $ioLevel] = moverPriority();
+    $writeMethod = $vars['md_write_method'] ?? "";
+    $turbo = $cfg['enableTurbo'] === "yes" && in_array($writeMethod, ["0", "1", "auto"], true) === true;
+
+    if ($turbo === true) {
+        logger("Forcing turbo write on");
+        setWriteMethod("1");
+    }
+    logger("Starting forced move (Unraid mover)");
+    // cron runs this under the CLI, where runMover blocks until the move ends; the restore below relies on that
+    runMover("ionice $ioLevel nice -n $niceLevel $mover start");
+    if ($turbo === true) {
+        logger("Restoring original turbo write mode");
+        setWriteMethod($writeMethod);
     }
 }
 
@@ -153,9 +220,7 @@ function startMover()
         exit($isHelp ? 0 : 1);
     }
 
-    $allowedIO = ["-c 2 -n 0", "-c 2 -n 7", "-c 3"];
-    $niceLevel = (string) (int) ($cfg['moverNice'] ?? 0);
-    $ioLevel = in_array($cfg['moverIO'] ?? "", $allowedIO, true) === true ? $cfg['moverIO'] : "-c 2 -n 0";
+    [$niceLevel, $ioLevel] = moverPriority();
 
     // Always use age_mover since we override the mover command for all versions.
     // Hoisted above the guards below so the status branch can use it.
@@ -185,13 +250,16 @@ function startMover()
         }
     }
 
-    // If Force move enabled
-    if ($cfg['force'] == "yes") {
-        if ($cfg['forceParity'] == "no" && $vars['mdResyncPos']) {
-            logger("Parity Check / Rebuild in Progress.  Not running forced move");
-            exit();
-        }
-    }
+    // 2026.09.28 merge: NEITHER side of this conflict is kept.
+    //  - The fork side was upstream's old in-line forced-move parity check, identical at
+    //    the merge base (never a fork change). Upstream moved it into forceMove() in
+    //    0972163 because here it applied the forced move's parity option to EVERY Mover
+    //    Tuning run: with force enabled, forceParity off and a parity check running, all
+    //    normal runs exited too.
+    //  - The upstream side is the movenow / Unraid-version branching that picks
+    //    /usr/local/sbin/mover or mover.old. This fork deleted it on purpose: $mover_str
+    //    is hardcoded to age_mover above, and on this fork /usr/local/sbin/mover is the
+    //    plugin wrapper on every Unraid version.
 
     if ($options == "stop") {
         logger("ionice $ioLevel nice -n $niceLevel $mover_str stop");
@@ -217,6 +285,11 @@ function startMover()
         logger("ionice $ioLevel nice -n $niceLevel $mover_str $options");
         runMover("ionice $ioLevel nice -n $niceLevel $mover_str $options");
     }
+}
+
+if ($force === true) {
+    forceMove();
+    exit();
 }
 
 if ($cron && $cfg['moverDisabled'] == 'yes') {
