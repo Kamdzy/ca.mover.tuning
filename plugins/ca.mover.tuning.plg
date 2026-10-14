@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2026.09.28a">
-<!ENTITY md5       "273817132f5ba964b3aa95c02c5246f0">
+<!ENTITY version   "2026.10.14">
+<!ENTITY md5       "c956dfab968eab3bc867f347f46f447b">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,10 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2026.10.14
+- fix: Hardlinked files covered by a Disk Priority Mapping are moved again. Each name of a hardlinked file was routed to a disk on its own, so the names could be planned for different disks; the mover then refused to split the group and left all of it on the cache on every run. On the maintainer's server this stranded 281 GB. All names of a hardlinked file now go to the disk chosen for the first one.
+
+
 ###2026.09.28a
 - fix: When every disk in a Disk Priority Mapping is full and the mapping already lists every array disk, the files stay on the cache with a single log line, instead of each one failing with "No space left on device". Mappings that list only some disks still fall back to the rest of the array.
 

@@ -35,6 +35,10 @@ For each file, if the file is not "in use" by any process (as detected by 'fuser
 If an error occurs in copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.10.14
+    - fix: Hardlinked files covered by a Disk Priority Mapping are moved again. Each name of a hardlinked file was routed to a disk on its own, so the names could be planned for different disks; the mover then refused to split the group and left all of it on the cache on every run. On the maintainer's server this stranded 281 GB. All names of a hardlinked file now go to the disk chosen for the first one.
+
+
 - 2026.09.28a
     - fix: When every disk in a Disk Priority Mapping is full and the mapping already lists every array disk, the files stay on the cache with a single log line, instead of each one failing with "No space left on device". Mappings that list only some disks still fall back to the rest of the array.
 
