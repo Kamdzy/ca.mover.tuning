@@ -2207,7 +2207,18 @@ decideMoveActions() {
                     # accounting and is the ONLY decrement in the file -- without it the
                     # threshold gate never closes.
                     # (No apostrophes here: this awk body is a single-quoted shell string.)
-                    destination = getPriorityDestination(full_path(), $8, "/mnt/" $2, 1)
+                    # A hardlink group must land on ONE disk: processTheMoves refuses a group whose
+                    # names are planned for different disks, and the whole group then stays on the
+                    # primary on every run. Routing each name on its own split them: the first name
+                    # is routed with its full size, later names with $8 = 0 (see Handle hardlinks),
+                    # so a later name "fits" the first disk with 100MB free. Reuse the disk of the
+                    # first name instead. key is only valid while $10 > 1.
+                    if ($10 > 1 && key in group_dest) {
+                        destination = group_dest[key]
+                    } else {
+                        destination = getPriorityDestination(full_path(), $8, "/mnt/" $2, 1)
+                        if ($10 > 1) group_dest[key] = destination
+                    }
                     if (destination == "KEEP") {
                         # every disk in its mapping is full: stays on the primary, frees nothing,
                         # so no net_delta decrement and no move statistics
