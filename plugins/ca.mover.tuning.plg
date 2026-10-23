@@ -754,6 +754,9 @@ if [[ -f "$MOVER_PATH" ]]; then
     # Current mover is different (either original or updated Unraid mover)
     if [[ -f "$MOVER_BACKUP" ]]; then
       # Check if backup is also different from current
+      # Unraid 7.4 ships its own mover.old (the pre-progress mover), so on 7.4 this
+      # replaces it on every boot. Intended: nothing in 7.4 calls that copy, and the
+      # forced move (mover.php forceMove) must run the CURRENT native mover.
       if ! cmp -s "$MOVER_PATH" "$MOVER_BACKUP"; then
         echo "Detected updated mover - updating backup"
         mv -f "$MOVER_PATH" "$MOVER_BACKUP"

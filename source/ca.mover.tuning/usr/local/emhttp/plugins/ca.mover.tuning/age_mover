@@ -1317,6 +1317,11 @@ createFilteredFilelist() {
                 mvlogger "$(qp "$SHAREPATH") does not exist. Is the ZFS dataset not created yet? Copy files to $(qp "/mnt/user/$SHARENAME") first."
                 mvlogger "Tip: Safely remove unused shares via the Unraid Shares -> Clean Up button."
                 mvlogger "=> Skipping"
+            elif [ -d "/mnt/user/$SHARENAME" ]; then
+                # The share holds data elsewhere (e.g. an array-only cache:no share), so it is in
+                # use: advising to remove its config here would delete a live share settings
+                mvlogger "$(qp "$SHAREPATH") does not exist: nothing of this share is on $PRIMARYSTORAGENAME"
+                mvlogger "=> Skipping"
             else
                 # Do not process this pool if path does not exist
                 mvlogger "$(qp "$SHAREPATH") does not exist. Is the share still used? Consider removing $SHARECFG if not."
@@ -1884,12 +1889,14 @@ createFilteredFilelist() {
         awk -F'|' '$14 !~ /^\/mnt\/disk[0-9]+\//' "$FILTERED_FILELIST" >"$tempfile1"
         awk -F'|' '$14 ~ /^\/mnt\/disk[0-9]+\//' "$FILTERED_FILELIST" >"$tempfile2"
         cat "$tempfile1" "$tempfile2" | awk -F"|" '
+            # 1/0, not true/false: awk has no such keywords, both were unset variables,
+            # so every row was printed and nothing was ever deduplicated
             function is_duplicate(key) {
                 if (prev[key]) {
-                    return true
+                    return 1
                 } else {
                     prev[key] = 1
-                    return false
+                    return 0
                 }
             }
             # the path is the last field and may itself contain the separator
