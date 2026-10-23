@@ -86,6 +86,18 @@ For each file, if the file is not "in use" by any process (as detected by the 'f
 If an error occurs while copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.10.23
+    - new: Merged upstream masterwishx 2026.10.17 (201 commits). **_(masterwishx, chodeus)_**
+    - new: Optional cache watchdog that starts a run when the cache fills up (off by default), scripts to run before and after the mover, and a Move order setting (oldest, largest or smallest first).
+    - new: Unraid 7.4 support: Mover Tuning runs show their progress under the Move button.
+    - new: Share overrides get a "Use global" choice for every setting. Existing overrides are unchanged.
+    - fix: Open files are detected without the kernel call trace seen on Unraid 7.2.8.
+    - fix: Plugin updates now always install the new package. A same-day letter release (for example 2026.09.28 to 2026.09.28a) could be skipped before.
+    - fix: Duplicate removal works. A file present on both the cache and the array was never deduplicated (also in upstream).
+    - fix: Array-only shares no longer get a log warning suggesting to remove their share config.
+    - fix: Removing the plugin restores the original Unraid mover on every Unraid version.
+
+
 - 2026.10.14
     - fix: Hardlinked files covered by a Disk Priority Mapping are moved again. Each name of a hardlinked file was routed to a disk on its own, so the names could be planned for different disks; the mover then refused to split the group and left all of it on the cache on every run. On the maintainer's server this stranded 281 GB. All names of a hardlinked file now go to the disk chosen for the first one.
 
