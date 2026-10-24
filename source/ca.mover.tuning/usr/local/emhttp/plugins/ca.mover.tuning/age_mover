@@ -1284,6 +1284,8 @@ createFilteredFilelist() {
         # Print pool info:
         mvlogger "Primary storage: $PRIMARYSTORAGENAME (${POOLFSTYPE:-unknown}) - size: $(bytes_to_human $POOLSIZE) - used: $POOLPCTUSED % ($(bytes_to_human $POOLBYTEUSED))"
         mvlogger "Secondary storage: $SECONDARYSTORAGENAME"
+        # planning a large share takes minutes: name it in the progress rows instead of a bare Calculating
+        moverStep "Calculating: scanning share $SHARENAME on $PRIMARYSTORAGENAME"
 
         # Find unattended storage for a share when rebalancing shares
         if [ "$REBALANCESHARES" = "yes" ]; then
@@ -1875,6 +1877,7 @@ createFilteredFilelist() {
     # files to the head would therefore move them FIRST rather than pin them on the
     # cache -- still not what we want, since routing should not depend on order.
     # Priority routing is applied per row from the path and size in decideMoveActions.
+    moverStep "Calculating: sorting the file list"
     sort -t '|' -k1,1 -k4,4 -k5,5nr -k11,11 -o "$FILTERED_FILELIST" "$FILTERED_FILELIST"
     # Need to remove duplicate (cache and array)
     if awk -F'|' '$14 ~ /^\/mnt\/disk[0-9]+\// { found = 1; exit } END { exit !found }' "$FILTERED_FILELIST"; then
@@ -3498,9 +3501,10 @@ start() {
 
     # Proceed with filter and create filtered filelist and action filelist
     [ ! -e $SOFTSTOPFILE ] && createFilteredFilelist
-    [ ! -e $SOFTSTOPFILE ] && [ "$MOVE_IN_USE" != "yes" ] && holdOpenFiles
-    [ ! -e $SOFTSTOPFILE ] && holdPartialHardlinks
-    [ ! -e $SOFTSTOPFILE ] && decideMoveActions
+    # the step names go to the progress rows; a failed status write must never skip the step itself
+    [ ! -e $SOFTSTOPFILE ] && [ "$MOVE_IN_USE" != "yes" ] && { moverStep "Calculating: checking for files in use"; holdOpenFiles; }
+    [ ! -e $SOFTSTOPFILE ] && { moverStep "Calculating: checking hardlinks"; holdPartialHardlinks; }
+    [ ! -e $SOFTSTOPFILE ] && { moverStep "Calculating: planning the moves"; decideMoveActions; }
 
     # Get current time to start time counter
     START_TIME=$(date +"%s")
