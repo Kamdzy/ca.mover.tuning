@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2026.10.23">
-<!ENTITY md5       "f70694ac2144782dd110feb8797bd8ce">
+<!ENTITY version   "2026.10.25">
+<!ENTITY md5       "b7e42eb454d02c756ac09f342e3ba280">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,10 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2026.10.25
+- new: While a run is being planned, the progress rows under the Move button name the current step (the share being scanned, sorting, the in-use and hardlink checks, planning) instead of only "Calculating". Planning a large share can take several minutes.
+
+
 ###2026.10.23
 - new: Merged upstream masterwishx 2026.10.17 (201 commits). **_(masterwishx, chodeus)_**
 - new: Optional cache watchdog that starts a run when the cache fills up (off by default), scripts to run before and after the mover, and a Move order setting (oldest, largest or smallest first).

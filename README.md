@@ -86,6 +86,10 @@ For each file, if the file is not "in use" by any process (as detected by the 'f
 If an error occurs while copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.10.25
+    - new: While a run is being planned, the progress rows under the Move button name the current step (the share being scanned, sorting, the in-use and hardlink checks, planning) instead of only "Calculating". Planning a large share can take several minutes.
+
+
 - 2026.10.23
     - new: Merged upstream masterwishx 2026.10.17 (201 commits). **_(masterwishx, chodeus)_**
     - new: Optional cache watchdog that starts a run when the cache fills up (off by default), scripts to run before and after the mover, and a Move order setting (oldest, largest or smallest first).
