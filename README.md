@@ -86,6 +86,10 @@ For each file, if the file is not "in use" by any process (as detected by the 'f
 If an error occurs while copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.10.26
+    - new: Small files move several times faster. The check for files in use took about half a second per file on a busy server; small files are now checked 200 at a time. Big files, hardlinked files and any batch in which a file is open keep their own check, and a batch answer is trusted for 5 seconds at most.
+
+
 - 2026.10.25
     - new: While a run is being planned, the progress rows under the Move button name the current step (the share being scanned, sorting, the in-use and hardlink checks, planning) instead of only "Calculating". Planning a large share can take several minutes.
 
