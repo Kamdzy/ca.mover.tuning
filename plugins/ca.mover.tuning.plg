@@ -2,8 +2,8 @@
 <!DOCTYPE PLUGIN [
 <!ENTITY name      "ca.mover.tuning">
 <!ENTITY author    "kamdzy">
-<!ENTITY version   "2026.10.26">
-<!ENTITY md5       "172668fcf15eaa8c7ea5aa55b66d74b1">
+<!ENTITY version   "2026.10.27">
+<!ENTITY md5       "9c737ff0106b0fc7d7a57c0a4c9f086b">
 <!ENTITY launch    "Settings/Scheduler">
 <!ENTITY plugdir   "/usr/local/emhttp/plugins/&name;">
 <!ENTITY github    "kamdzy/&name;">
@@ -15,6 +15,11 @@
 <PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;" pluginURL="&pluginURL;" icon="wrench" min="6.9.0-rc2">
 
 <CHANGES>
+###2026.10.27
+- fix: Planning is much faster when the array is nearly full. The Disk Priority Mapping router read each disk free space again for every file, so a file that fits on none of its disks cost seven checks; a 35,000-file run spent 16 minutes planning. Free space is now read once per disk per run, with the same destinations.
+- fix: A disk in a Disk Priority Mapping whose free space cannot be read (for example a missing or unmounted disk) is no longer picked using the free space of the disk checked before it.
+
+
 ###2026.10.26
 - new: Small files move several times faster. The check for files in use took about half a second per file on a busy server; small files are now checked 200 at a time. Big files, hardlinked files and any batch in which a file is open keep their own check, and a batch answer is trusted for 5 seconds at most.
 

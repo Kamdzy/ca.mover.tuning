@@ -86,6 +86,11 @@ For each file, if the file is not "in use" by any process (as detected by the 'f
 If an error occurs while copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.10.27
+    - fix: Planning is much faster when the array is nearly full. The Disk Priority Mapping router read each disk free space again for every file, so a file that fits on none of its disks cost seven checks; a 35,000-file run spent 16 minutes planning. Free space is now read once per disk per run, with the same destinations.
+    - fix: A disk in a Disk Priority Mapping whose free space cannot be read (for example a missing or unmounted disk) is no longer picked using the free space of the disk checked before it.
+
+
 - 2026.10.26
     - new: Small files move several times faster. The check for files in use took about half a second per file on a busy server; small files are now checked 200 at a time. Big files, hardlinked files and any batch in which a file is open keep their own check, and a batch answer is trusted for 5 seconds at most.
 
