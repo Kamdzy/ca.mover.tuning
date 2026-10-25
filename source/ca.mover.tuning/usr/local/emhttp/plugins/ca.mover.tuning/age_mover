@@ -2109,11 +2109,20 @@ decideMoveActions() {
                             mapped_disk[disk_name] = 1
                             disk_path = "/mnt/" disk_name
                             
-                            # Get current available space for this disk
-                            cmd = "df --output=avail " disk_path " 2>/dev/null | tail -n 1"
-                            cmd | getline available_kb
-                            close(cmd)
-                            
+                            # Free space of this disk, read once per run: nothing is moved while the run is
+                            # planned, and pending_disk_usage carries what the plan has already put there.
+                            # A df per call cost a shell, df and tail for every disk tried, so a file that
+                            # fits nowhere (every disk of its mapping full) cost 7 of them, planning about
+                            # 25 rows a second. Reset first: a failed getline keeps the previous disk value.
+                            if (!(disk_path in disk_avail_kb)) {
+                                available_kb = 0
+                                cmd = "df --output=avail " disk_path " 2>/dev/null | tail -n 1"
+                                cmd | getline available_kb
+                                close(cmd)
+                                disk_avail_kb[disk_path] = available_kb + 0
+                            }
+                            available_kb = disk_avail_kb[disk_path]
+
                             if (available_kb > 0) {
                                 available_bytes = available_kb * 1024
                                 
