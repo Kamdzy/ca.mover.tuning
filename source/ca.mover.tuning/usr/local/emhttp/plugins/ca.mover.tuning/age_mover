@@ -2725,6 +2725,41 @@ move_tool_said() {
     done <<<"$MOVE_OUT"
 }
 
+# Is a name of this row open? Returns 0 when one is.
+# fuser reads the open files of every process: about half a second on a busy server, however many
+# names it is given, which made the check most of the time spent on a small file. A small single-name
+# file is therefore checked together with the small files that follow it in the pass, and a
+# "none open" answer is trusted for INUSE_TTL seconds. Every other row, and every row of a batch in
+# which a file was open, gets its own fuser call as before.
+INUSE_BATCH=200
+INUSE_TTL=5
+INUSE_BATCH_MAX_SIZE=104857600
+in_use() {
+    if [ "$#" -ne 1 ] || [ "$FILESIZE" -ge "$INUSE_BATCH_MAX_SIZE" ] || [ "$ROW_IDX" -le "$INUSE_DIRTY_END" ]; then
+        fuser -s "$@" 2>/dev/null
+        return
+    fi
+    [ -n "${INUSE_CLEAR[$1]}" ] && [ $((EPOCHSECONDS - INUSE_CLEAR_AT)) -le "$INUSE_TTL" ] && return 1
+    local -a batch
+    local f
+    # the same paths as the row check: source "/" path, from the rows of this pass from this one on
+    mapfile -t batch < <(printf '%s\n' "${PASS_ROWS[@]:ROW_IDX:INUSE_BATCH}" | awk -F'|' -v max="$INUSE_BATCH_MAX_SIZE" '
+        $14 == "f" && $9 == 1 && $5 < max { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; print $12 "/" p }')
+    INUSE_CLEAR=()
+    # taken before the call, so the answer is never trusted longer than INUSE_TTL
+    INUSE_CLEAR_AT=$EPOCHSECONDS
+    if [ "${#batch[@]}" -eq 0 ] || fuser -s "${batch[@]}" 2>/dev/null; then
+        # one of them is open: the rows of this batch are checked one by one
+        INUSE_DIRTY_END=$((ROW_IDX + INUSE_BATCH - 1))
+        fuser -s "$1" 2>/dev/null
+        return
+    fi
+    for f in "${batch[@]}"; do INUSE_CLEAR[$f]=1; done
+    # never vouch for a name the batch did not contain
+    [ -n "${INUSE_CLEAR[$1]}" ] && return 1
+    fuser -s "$1" 2>/dev/null
+}
+
 # Internal move engine
 processTheMoves() {
     if [ -e $SOFTSTOPFILE ]; then
@@ -2758,6 +2793,10 @@ processTheMoves() {
     local -A STAGED_OK=()
     local -A STAGED_VANISHED=()
     local -A STAGED_INUSE=()
+    # in_use() batches: the rows of the current pass, the index of the current row, and the names found closed
+    local -a PASS_ROWS=()
+    local -A INUSE_CLEAR=()
+    local ROW_IDX INUSE_CLEAR_AT=0 INUSE_DIRTY_END
     # without fuser an open file cannot be told apart, so none is moved while moveInUse is no
     local fuser_missing=0
     if [ "$MOVE_IN_USE" != "yes" ] && ! command -v fuser >/dev/null; then
@@ -2790,7 +2829,14 @@ processTheMoves() {
     # "keep on primary", "keep on secondary" and "keep misplaced" are not actions, so they are absent
 
     for ACTION_PASS in "${MOVE_ACTIONS[@]}"; do
+        # the rows the loop below reads, in the same order, so in_use() can look ahead from ROW_IDX
+        mapfile -t PASS_ROWS < <(awk -F'|' -v a="$ACTION_PASS" '$11 == a' "$MOVER_ACTIONLIST")
+        ROW_IDX=-1
+        INUSE_CLEAR=()
+        INUSE_DIRTY_END=-1
         while IFS="|" read -r PRIMARYSTORAGENAME SHARENAME SHAREUSECACHE MODIFYTIME FILESIZE POOLSUM THRESHOLD PROJECTED NBLINKS INODE ACTION SOURCE DESTINATION FILETYPE FILEPATH; do
+            # first, before any continue
+            ROW_IDX=$((ROW_IDX + 1))
             if [ -e $SOFTSTOPFILE ]; then
                 [ $SOFTSTOP_ACK = true ] || mvlogger "Soft Stopping requested" && SOFTSTOP_ACK=true
                 return
@@ -2898,7 +2944,7 @@ processTheMoves() {
 
             # an open name keeps its source copy alive, so moving it frees nothing: skip it like Unraid's move
             # (fuser takes no "--": with it, psmisc fuser reports an open file as not in use)
-            if [ "$MOVE_IN_USE" != "yes" ] && [[ "$ACTION" =~ "move" && "$FILETYPE" = "f" ]] && [ "$NBFILES" -gt 0 ] && { [ "$fuser_missing" = 1 ] || fuser -s "${SYNCED_FILES_ARR[@]//\/.\//\/}" 2>/dev/null; }; then
+            if [ "$MOVE_IN_USE" != "yes" ] && [[ "$ACTION" =~ "move" && "$FILETYPE" = "f" ]] && [ "$NBFILES" -gt 0 ] && { [ "$fuser_missing" = 1 ] || in_use "${SYNCED_FILES_ARR[@]//\/.\//\/}"; }; then
                 mvlogger "In use, left for a later run: $SYNCED_FILES"
                 # a move from primary left in place was not synced either, so lastCacheSync must wait; a staged row leaves that to its sync row
                 if [ "$STAGE_ROW" = 1 ]; then STAGED_INUSE[$chain_key]=1; else INUSEFILES=$((INUSEFILES + NBFILES)); fi
