@@ -86,6 +86,10 @@ For each file, if the file is not "in use" by any process (as detected by the 'f
 If an error occurs while copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.11.03
+    - fix: Small files move about twice as fast on a large run. The mover held the whole list of files to move in memory, which made each of the dozen or so helper processes it starts per file cost over ten times more (about 17 ms instead of 1.5 ms on a run of 440,000 files). The list is now read from a temporary file in the mover's log folder, removed when the moves end.
+
+
 - 2026.11.02
     - fix: Small files no longer stall on a large run. The batched in-use check copied its 200 files out of the whole run's file list in a way that slows down faster than the square of the list's length: on a run of 440,000 files one batch took over 10 minutes, so small files crawled and a soft stop waited for the batch to end. Each batch now takes milliseconds.
     - fix: Files with a single link no longer re-read the whole move list to look for other hardlinked names, which cost about a third of a second per file on a large run.
