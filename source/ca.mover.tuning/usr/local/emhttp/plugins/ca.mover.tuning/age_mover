@@ -2749,10 +2749,14 @@ in_use() {
         return
     fi
     [ -n "${INUSE_CLEAR[$1]}" ] && [ $((EPOCHSECONDS - INUSE_CLEAR_AT)) -le "$INUSE_TTL" ] && return 1
-    local -a batch
-    local f
+    local -a batch rows=()
+    local f k end=$((ROW_IDX + INUSE_BATCH))
+    # the rows are taken one index at a time: bash's slice "${PASS_ROWS[@]:ROW_IDX:INUSE_BATCH}" costs more than the
+    # square of the array's length (6 s at 40k rows; a 440k-row pass sat over 10 minutes in one), wherever it starts
+    [ "$end" -gt "${#PASS_ROWS[@]}" ] && end=${#PASS_ROWS[@]}
+    for ((k = ROW_IDX; k < end; k++)); do rows+=("${PASS_ROWS[k]}"); done
     # the same paths as the row check: source "/" path, from the rows of this pass from this one on
-    mapfile -t batch < <(printf '%s\n' "${PASS_ROWS[@]:ROW_IDX:INUSE_BATCH}" | awk -F'|' -v max="$INUSE_BATCH_MAX_SIZE" '
+    mapfile -t batch < <(printf '%s\n' "${rows[@]}" | awk -F'|' -v max="$INUSE_BATCH_MAX_SIZE" '
         $14 == "f" && $9 == 1 && $5 < max { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; print $12 "/" p }')
     INUSE_CLEAR=()
     # taken before the call, so the answer is never trusted longer than INUSE_TTL
@@ -2912,9 +2916,15 @@ processTheMoves() {
             # via this array (instead of eval) stops the shell from interpreting
             # spaces, backticks, $(...), redirections, etc. that appear in file names.
             # every field is compared whole, so a name containing | cannot impersonate another row
-            mapfile -t SYNCED_FILES_ARR < <(awk -F'|' -v links="$NBLINKS" -v inode="$INODE" -v mtime="$MODIFYTIME" -v action="$ACTION" -v src="$SOURCE" -v dst="$DESTINATION" '
-                BEGIN { links = links ""; inode = inode ""; mtime = mtime "" }
-                $4 == mtime && $9 == links && $10 == inode && $11 == action && $12 == src && $13 == dst { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; print src "/./" p }' "$MOVER_ACTIONLIST")
+            # A file with one link has no other name, so it skips the lookup: reading the whole action list
+            # for every row cost ~0.4 s per file on an 88 MB list, the floor of every small-file move.
+            if [ "$FILETYPE" = "f" ] && [ "$NBLINKS" = 1 ]; then
+                SYNCED_FILES_ARR=("$SOURCE/./$FILEPATH")
+            else
+                mapfile -t SYNCED_FILES_ARR < <(awk -F'|' -v links="$NBLINKS" -v inode="$INODE" -v mtime="$MODIFYTIME" -v action="$ACTION" -v src="$SOURCE" -v dst="$DESTINATION" '
+                    BEGIN { links = links ""; inode = inode ""; mtime = mtime "" }
+                    $4 == mtime && $9 == links && $10 == inode && $11 == action && $12 == src && $13 == dst { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; print src "/./" p }' "$MOVER_ACTIONLIST")
+            fi
 
             # SYNCED_FILES is a display/count string only, derived from the array so
             # the extraction pipeline above runs only once per file.
