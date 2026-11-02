@@ -118,6 +118,8 @@ NOW=$(date +"%FT%H%M%S")
 FILTERED_FILELIST="${LOGFOLDER}/ca.mover.tuning/Filtered_files_$NOW.list"
 HELD_FILELIST="${LOGFOLDER}/ca.mover.tuning/Held_files_$NOW.list"
 MOVER_ACTIONLIST="${LOGFOLDER}/ca.mover.tuning/Mover_action_$NOW.list"
+# the rows of the action pass being moved, which processTheMoves reads and in_use() looks ahead in
+MOVER_PASSLIST="${LOGFOLDER}/ca.mover.tuning/Mover_pass_$NOW.list"
 STATS_FILE="${LOGFOLDER}/ca.mover.tuning/Summary_$NOW.txt"
 MOVER_STATUS="/usr/local/emhttp/state/mover.ini"
 MOVER_LOG="${LOGFOLDER}/ca.mover.tuning/Mover_tuning_$NOW.log"
@@ -2749,14 +2751,12 @@ in_use() {
         return
     fi
     [ -n "${INUSE_CLEAR[$1]}" ] && [ $((EPOCHSECONDS - INUSE_CLEAR_AT)) -le "$INUSE_TTL" ] && return 1
-    local -a batch rows=()
-    local f k end=$((ROW_IDX + INUSE_BATCH))
-    # the rows are taken one index at a time: bash's slice "${PASS_ROWS[@]:ROW_IDX:INUSE_BATCH}" costs more than the
-    # square of the array's length (6 s at 40k rows; a 440k-row pass sat over 10 minutes in one), wherever it starts
-    [ "$end" -gt "${#PASS_ROWS[@]}" ] && end=${#PASS_ROWS[@]}
-    for ((k = ROW_IDX; k < end; k++)); do rows+=("${PASS_ROWS[k]}"); done
+    local -a batch
+    local f end=$((ROW_IDX + INUSE_BATCH))
+    # the rows are read from the pass file, not held in this shell: a 444k-row pass in an array made every fork of the
+    # move loop copy it (16.7 ms per $(...) against 1.3 ms, ~15 forks a row), and slicing it took minutes
     # the same paths as the row check: source "/" path, from the rows of this pass from this one on
-    mapfile -t batch < <(printf '%s\n' "${rows[@]}" | awk -F'|' -v max="$INUSE_BATCH_MAX_SIZE" '
+    mapfile -t batch < <(sed -n "$((ROW_IDX + 1)),${end}p;${end}q" "$MOVER_PASSLIST" | awk -F'|' -v max="$INUSE_BATCH_MAX_SIZE" '
         $14 == "f" && $9 == 1 && $5 < max { p = $15; for (i = 16; i <= NF; i++) p = p "|" $i; print $12 "/" p }')
     INUSE_CLEAR=()
     # taken before the call, so the answer is never trusted longer than INUSE_TTL
@@ -2806,8 +2806,7 @@ processTheMoves() {
     local -A STAGED_OK=()
     local -A STAGED_VANISHED=()
     local -A STAGED_INUSE=()
-    # in_use() batches: the rows of the current pass, the index of the current row, and the names found closed
-    local -a PASS_ROWS=()
+    # in_use() batches: the index of the current row in MOVER_PASSLIST, and the names found closed
     local -A INUSE_CLEAR=()
     local ROW_IDX INUSE_CLEAR_AT=0 INUSE_DIRTY_END
     # without fuser an open file cannot be told apart, so none is moved while moveInUse is no
@@ -2842,8 +2841,8 @@ processTheMoves() {
     # "keep on primary", "keep on secondary" and "keep misplaced" are not actions, so they are absent
 
     for ACTION_PASS in "${MOVE_ACTIONS[@]}"; do
-        # the rows the loop below reads, in the same order, so in_use() can look ahead from ROW_IDX
-        mapfile -t PASS_ROWS < <(awk -F'|' -v a="$ACTION_PASS" '$11 == a' "$MOVER_ACTIONLIST")
+        # the rows the loop below reads, from a file so in_use() can look ahead from ROW_IDX
+        awk -F'|' -v a="$ACTION_PASS" '$11 == a' "$MOVER_ACTIONLIST" >"$MOVER_PASSLIST"
         ROW_IDX=-1
         INUSE_CLEAR=()
         INUSE_DIRTY_END=-1
@@ -3401,8 +3400,9 @@ processTheMoves() {
                 fi
             fi
             moverStatusWrite
-        done <<<"$(awk -F'|' -v a="$ACTION_PASS" '$11 == a' "$MOVER_ACTIONLIST")"
+        done <"$MOVER_PASSLIST"
     done
+    rm -f "$MOVER_PASSLIST"
 
     [ "$INUSEFILES" -gt 0 ] && mvlogger "$INUSEFILES files were in use and stay on the source until a later run"
     mvlogger "$(titleLine "Cleaning up" '-')"
