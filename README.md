@@ -86,6 +86,11 @@ For each file, if the file is not "in use" by any process (as detected by the 'f
 If an error occurs while copying a file, the partial file, if present, is deleted and the operation continues on to the next file.
 
 ## Changelog
+- 2026.11.02
+    - fix: Small files no longer stall on a large run. The batched in-use check copied its 200 files out of the whole run's file list in a way that slows down faster than the square of the list's length: on a run of 440,000 files one batch took over 10 minutes, so small files crawled and a soft stop waited for the batch to end. Each batch now takes milliseconds.
+    - fix: Files with a single link no longer re-read the whole move list to look for other hardlinked names, which cost about a third of a second per file on a large run.
+
+
 - 2026.10.27
     - fix: Planning is much faster when the array is nearly full. The Disk Priority Mapping router read each disk free space again for every file, so a file that fits on none of its disks cost seven checks; a 35,000-file run spent 16 minutes planning. Free space is now read once per disk per run, with the same destinations.
     - fix: A disk in a Disk Priority Mapping whose free space cannot be read (for example a missing or unmounted disk) is no longer picked using the free space of the disk checked before it.
